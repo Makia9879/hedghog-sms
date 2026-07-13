@@ -8,3 +8,5 @@ build/
 app/build/
 captures/
 *.iml
+/.gradle-codex
+/.android-codex
