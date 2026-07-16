@@ -35,8 +35,14 @@ class TrainingRepository(private val database: AppDatabase) {
             }
             else -> Unit // Idempotent retry after a previously interrupted UI action.
         }
-        check(database.classificationDao().confirmHumanLabel(sourceMessageId, platformKey, displayName, now) == 1) {
-            "classification row missing"
+        val updated = database.classificationDao().confirmPendingHumanLabel(sourceMessageId, platformKey, displayName, now)
+        if (updated == 0) {
+            val existingClassification = database.classificationDao().get(sourceMessageId)
+            check(
+                existingClassification?.isHumanConfirmed == true &&
+                    existingClassification.platformKey == platformKey &&
+                    existingClassification.platformDisplayName == displayName,
+            ) { "classification row missing or no longer pending" }
         }
     }
 

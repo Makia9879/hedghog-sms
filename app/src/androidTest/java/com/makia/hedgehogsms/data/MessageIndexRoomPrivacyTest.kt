@@ -11,6 +11,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import com.makia.hedgehogsms.sync.SyncState
 import com.makia.hedgehogsms.classification.MessageClassification
+import com.makia.hedgehogsms.classification.PlatformSlotFilter
 
 @RunWith(AndroidJUnit4::class)
 class MessageIndexRoomPrivacyTest {
@@ -133,5 +134,52 @@ class MessageIndexRoomPrivacyTest {
         assertEquals("虚构甲", preserved.platformDisplayName)
         assertTrue(preserved.isHumanConfirmed)
         assertEquals("HUMAN", preserved.source)
+    }
+
+    @Test fun platformSummariesRespectScanSlotFilter() = kotlinx.coroutines.runBlocking {
+        database.messageIndexDao().upsertAll(listOf(
+            MessageIndex(1, 100, 1, null, 0, SlotMappingStatus.RESOLVED, 1, 1),
+            MessageIndex(2, 200, 1, null, 1, SlotMappingStatus.RESOLVED, 1, 1),
+            MessageIndex(3, 300, 1, null, null, SlotMappingStatus.UNKNOWN_NO_SUB_ID, 1, 1),
+        ))
+        database.classificationDao().insertAutomated(listOf(
+            MessageClassification(1, true, "bank", "虚构银行", "LABELED", "RULE", false, 1),
+            MessageClassification(2, true, "bank", "虚构银行", "LABELED", "RULE", false, 1),
+            MessageClassification(3, true, "shop", "虚构商店", "LABELED", "RULE", false, 1),
+        ))
+
+        val all = database.classificationDao().platformSummaries(PlatformSlotFilter.ALL.name)
+        val slot1 = database.classificationDao().platformSummaries(PlatformSlotFilter.SLOT_1.name)
+        val slot2 = database.classificationDao().platformSummaries(PlatformSlotFilter.SLOT_2.name)
+        val unknown = database.classificationDao().platformSummaries(PlatformSlotFilter.UNKNOWN.name)
+
+        assertEquals(listOf("shop", "bank"), all.map { it.platformKey })
+        assertEquals(2, all.first { it.platformKey == "bank" }.otpCount)
+        assertEquals(listOf("bank"), slot1.map { it.platformKey })
+        assertEquals(1, slot1.single().otpCount)
+        assertEquals(100, slot1.single().latestMessageDate)
+        assertEquals(listOf("bank"), slot2.map { it.platformKey })
+        assertEquals(200, slot2.single().latestMessageDate)
+        assertEquals(listOf("shop"), unknown.map { it.platformKey })
+    }
+
+    @Test fun platformEvidenceUsesSameOtpAndSlotFilterAsSummary() = kotlinx.coroutines.runBlocking {
+        database.messageIndexDao().upsertAll(listOf(
+            MessageIndex(10, 100, 1, null, 0, SlotMappingStatus.RESOLVED, 1, 1),
+            MessageIndex(11, 110, 1, null, 0, SlotMappingStatus.RESOLVED, 1, 1),
+            MessageIndex(12, 120, 1, null, 1, SlotMappingStatus.RESOLVED, 1, 1),
+        ))
+        database.classificationDao().insertAutomated(listOf(
+            MessageClassification(10, true, "bank", "虚构银行", "LABELED", "RULE", false, 1),
+            MessageClassification(11, false, "bank", "虚构银行", "NON_OTP", "RULE", false, 1),
+            MessageClassification(12, true, "bank", "虚构银行", "LABELED", "RULE", false, 1),
+        ))
+
+        val slot1Summary = database.classificationDao().platformSummaries(PlatformSlotFilter.SLOT_1.name).single()
+        val slot1EvidenceIds = database.classificationDao()
+            .messageIdsForPlatform("bank", PlatformSlotFilter.SLOT_1.name, 25, 0)
+
+        assertEquals(1, slot1Summary.otpCount)
+        assertEquals(listOf(10L), slot1EvidenceIds)
     }
 }

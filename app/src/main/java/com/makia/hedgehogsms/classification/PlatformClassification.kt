@@ -5,7 +5,6 @@ import androidx.room.PrimaryKey
 import com.makia.hedgehogsms.data.SmsRecord
 import com.makia.hedgehogsms.AppContainer
 import java.security.MessageDigest
-import java.util.Locale
 
 enum class MessageClassStatus { NON_OTP, PENDING_LABEL, LABELED }
 enum class MessageClassSource { RULE, LOCAL_MODEL, HUMAN, LLM }
@@ -62,7 +61,8 @@ object PlatformRuleClassifier {
             return MessageClassification(sms.id, false, null, null, MessageClassStatus.NON_OTP.name, null, updatedAt = now)
         }
         val displayName = bracketedSignature.find(sms.body)?.groupValues?.get(1)
-            ?.trim()?.takeIf { it.isNotBlank() && !rejectedSignature.matches(it) }
+            ?.let { runCatching { PlatformLabelNormalizer.displayName(it) }.getOrNull() }
+            ?.takeIf { !rejectedSignature.matches(it) }
         return if (displayName == null) {
             MessageClassification(sms.id, true, null, null, MessageClassStatus.PENDING_LABEL.name, null, updatedAt = now)
         } else {
@@ -79,11 +79,11 @@ object PlatformRuleClassifier {
     }
 
     fun stablePlatformKey(name: String): String = MessageDigest.getInstance("SHA-256")
-        .digest(name.lowercase(Locale.ROOT).toByteArray(Charsets.UTF_8))
+        .digest(PlatformLabelNormalizer.comparisonKey(name).toByteArray(Charsets.UTF_8))
         .take(12).joinToString("") { "%02x".format(it) }
 
     fun stablePlatformLabelId(name: String): Long = MessageDigest.getInstance("SHA-256")
-        .digest(name.lowercase(Locale.ROOT).toByteArray(Charsets.UTF_8))
+        .digest(PlatformLabelNormalizer.comparisonKey(name).toByteArray(Charsets.UTF_8))
         .take(8).fold(0L) { acc, byte -> (acc shl 8) or (byte.toLong() and 0xff) }
         .and(Long.MAX_VALUE)
 }

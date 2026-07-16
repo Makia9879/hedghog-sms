@@ -14,6 +14,7 @@ import com.makia.hedgehogsms.sync.SyncState
 import com.makia.hedgehogsms.classification.MessageClassification
 import com.makia.hedgehogsms.classification.PlatformSummary
 import com.makia.hedgehogsms.classification.PlatformIdentity
+import com.makia.hedgehogsms.classification.PlatformSlotFilter
 import com.makia.hedgehogsms.classification.TrainingSample
 import com.makia.hedgehogsms.classification.TrainingFeature
 import com.makia.hedgehogsms.classification.ModelClassStat
@@ -102,17 +103,66 @@ interface ClassificationDao {
         WHERE c.isOtp=1 AND c.platformKey IS NOT NULL
         GROUP BY c.platformKey ORDER BY latestMessageDate DESC
     """)
-    fun observePlatformSummaries(): Flow<List<PlatformSummary>>
+    fun observeAllPlatformSummaries(): Flow<List<PlatformSummary>>
 
-    @Query("SELECT sourceMessageId FROM message_classification WHERE platformKey=:platformKey ORDER BY sourceMessageId DESC LIMIT :limit OFFSET :offset")
-    suspend fun messageIdsForPlatform(platformKey: String, limit: Int, offset: Int): List<Long>
+    fun observePlatformSummaries(): Flow<List<PlatformSummary>> = observePlatformSummaries(PlatformSlotFilter.ALL.name)
+
+    @Query("""
+        SELECT c.platformKey AS platformKey, MAX(c.platformDisplayName) AS displayName,
+          COUNT(*) AS otpCount, MAX(m.messageDate) AS latestMessageDate,
+          COALESCE(SUM(CASE WHEN m.slotSnapshotIndex=0 AND m.slotMappingStatus='RESOLVED' THEN 1 ELSE 0 END),0) AS slot1Count,
+          COALESCE(SUM(CASE WHEN m.slotSnapshotIndex=1 AND m.slotMappingStatus='RESOLVED' THEN 1 ELSE 0 END),0) AS slot2Count,
+          COALESCE(SUM(CASE WHEN m.slotMappingStatus!='RESOLVED' OR m.slotSnapshotIndex IS NULL OR m.slotSnapshotIndex NOT IN (0,1) THEN 1 ELSE 0 END),0) AS unknownCount
+        FROM message_classification c JOIN message_index m ON m.sourceMessageId=c.sourceMessageId
+        WHERE c.isOtp=1 AND c.platformKey IS NOT NULL AND (
+          :slotFilter='ALL'
+          OR (:slotFilter='SLOT_1' AND m.slotSnapshotIndex=0 AND m.slotMappingStatus='RESOLVED')
+          OR (:slotFilter='SLOT_2' AND m.slotSnapshotIndex=1 AND m.slotMappingStatus='RESOLVED')
+          OR (:slotFilter='UNKNOWN' AND (m.slotMappingStatus!='RESOLVED' OR m.slotSnapshotIndex IS NULL OR m.slotSnapshotIndex NOT IN (0,1)))
+        )
+        GROUP BY c.platformKey ORDER BY latestMessageDate DESC
+    """)
+    fun observePlatformSummaries(slotFilter: String): Flow<List<PlatformSummary>>
+
+    @Query("""
+        SELECT c.platformKey AS platformKey, MAX(c.platformDisplayName) AS displayName,
+          COUNT(*) AS otpCount, MAX(m.messageDate) AS latestMessageDate,
+          COALESCE(SUM(CASE WHEN m.slotSnapshotIndex=0 AND m.slotMappingStatus='RESOLVED' THEN 1 ELSE 0 END),0) AS slot1Count,
+          COALESCE(SUM(CASE WHEN m.slotSnapshotIndex=1 AND m.slotMappingStatus='RESOLVED' THEN 1 ELSE 0 END),0) AS slot2Count,
+          COALESCE(SUM(CASE WHEN m.slotMappingStatus!='RESOLVED' OR m.slotSnapshotIndex IS NULL OR m.slotSnapshotIndex NOT IN (0,1) THEN 1 ELSE 0 END),0) AS unknownCount
+        FROM message_classification c JOIN message_index m ON m.sourceMessageId=c.sourceMessageId
+        WHERE c.isOtp=1 AND c.platformKey IS NOT NULL AND (
+          :slotFilter='ALL'
+          OR (:slotFilter='SLOT_1' AND m.slotSnapshotIndex=0 AND m.slotMappingStatus='RESOLVED')
+          OR (:slotFilter='SLOT_2' AND m.slotSnapshotIndex=1 AND m.slotMappingStatus='RESOLVED')
+          OR (:slotFilter='UNKNOWN' AND (m.slotMappingStatus!='RESOLVED' OR m.slotSnapshotIndex IS NULL OR m.slotSnapshotIndex NOT IN (0,1)))
+        )
+        GROUP BY c.platformKey ORDER BY latestMessageDate DESC
+    """)
+    suspend fun platformSummaries(slotFilter: String): List<PlatformSummary>
+
+    suspend fun messageIdsForPlatform(platformKey: String, limit: Int, offset: Int): List<Long> =
+        messageIdsForPlatform(platformKey, PlatformSlotFilter.ALL.name, limit, offset)
+
+    @Query("""
+        SELECT c.sourceMessageId FROM message_classification c JOIN message_index m ON m.sourceMessageId=c.sourceMessageId
+        WHERE c.isOtp=1 AND c.platformKey=:platformKey AND (
+          :slotFilter='ALL'
+          OR (:slotFilter='SLOT_1' AND m.slotSnapshotIndex=0 AND m.slotMappingStatus='RESOLVED')
+          OR (:slotFilter='SLOT_2' AND m.slotSnapshotIndex=1 AND m.slotMappingStatus='RESOLVED')
+          OR (:slotFilter='UNKNOWN' AND (m.slotMappingStatus!='RESOLVED' OR m.slotSnapshotIndex IS NULL OR m.slotSnapshotIndex NOT IN (0,1)))
+        )
+        ORDER BY c.sourceMessageId DESC LIMIT :limit OFFSET :offset
+    """)
+    suspend fun messageIdsForPlatform(platformKey: String, slotFilter: String, limit: Int, offset: Int): List<Long>
 
     @Query("SELECT sourceMessageId FROM message_classification WHERE status='PENDING_LABEL' ORDER BY sourceMessageId DESC LIMIT 1")
     suspend fun nextPendingMessageId(): Long?
 
     @Query("""UPDATE message_classification SET platformKey=:platformKey, platformDisplayName=:displayName,
-        status='LABELED', source='HUMAN', isHumanConfirmed=1, updatedAt=:now WHERE sourceMessageId=:sourceMessageId""")
-    suspend fun confirmHumanLabel(sourceMessageId: Long, platformKey: String, displayName: String, now: Long): Int
+        status='LABELED', source='HUMAN', isHumanConfirmed=1, updatedAt=:now
+        WHERE sourceMessageId=:sourceMessageId AND status='PENDING_LABEL'""")
+    suspend fun confirmPendingHumanLabel(sourceMessageId: Long, platformKey: String, displayName: String, now: Long): Int
 
     @Query("SELECT DISTINCT platformKey, platformDisplayName AS displayName FROM message_classification WHERE platformKey IS NOT NULL AND platformDisplayName IS NOT NULL")
     suspend fun knownPlatforms(): List<PlatformIdentity>

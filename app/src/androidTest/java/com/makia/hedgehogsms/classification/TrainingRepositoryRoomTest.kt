@@ -94,4 +94,34 @@ class TrainingRepositoryRoomTest {
         assertEquals("LABELED", database.classificationDao().get(9)?.status)
         assertEquals(true, database.classificationDao().get(9)?.isHumanConfirmed)
     }
+
+    @Test fun humanConfirmationRejectsNoLongerPendingCandidate() = runBlocking {
+        val features = SparseFeatures(mapOf(12 to 2), keyId = "test-key")
+        database.classificationDao().insertAutomated(listOf(
+            MessageClassification(10, true, "old", "旧平台", "LABELED", "RULE", false, 1),
+        ))
+
+        assertThrows(IllegalStateException::class.java) {
+            runBlocking {
+                repository.confirmHumanClassification(10, 10, 88, "new", "新平台", features, 2)
+            }
+        }
+
+        assertNull(database.trainingDao().sample(10))
+        assertEquals("old", database.classificationDao().get(10)?.platformKey)
+    }
+
+    @Test fun failedHumanConfirmationRollsBackTrainingInsert() = runBlocking {
+        val features = SparseFeatures(mapOf(13 to 2), keyId = "test-key")
+
+        assertThrows(IllegalStateException::class.java) {
+            runBlocking {
+                repository.confirmHumanClassification(11, 11, 99, "missing", "缺失平台", features, 2)
+            }
+        }
+
+        assertNull(database.trainingDao().sample(11))
+        assertNull(database.trainingDao().classStat(99, "test-key", 1))
+        assertNull(database.trainingDao().featureStat(99, 13, "test-key", 1))
+    }
 }
