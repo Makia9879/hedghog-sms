@@ -46,6 +46,7 @@ import com.makia.hedgehogsms.data.SmsRecord
 import com.makia.hedgehogsms.data.SmsPermissionUnavailableException
 import com.makia.hedgehogsms.data.ScanStatus
 import com.makia.hedgehogsms.scan.HistoryScanCoordinator
+import com.makia.hedgehogsms.classification.PlatformRuleClassifier
 import com.makia.hedgehogsms.permission.PermissionEvent
 import com.makia.hedgehogsms.permission.PermissionSnapshot
 import com.makia.hedgehogsms.permission.PermissionStep
@@ -53,7 +54,9 @@ import com.makia.hedgehogsms.permission.reduce
 import com.makia.hedgehogsms.ui.InboxViewModel
 import com.makia.hedgehogsms.ui.platform.EvidenceMessageUi
 import com.makia.hedgehogsms.ui.platform.LabelChoiceUi
+import com.makia.hedgehogsms.ui.platform.MESSAGE_DETAIL_PERMISSION_UNAVAILABLE
 import com.makia.hedgehogsms.ui.platform.ManagedLabelUi
+import com.makia.hedgehogsms.ui.platform.MessageDetailSource
 import com.makia.hedgehogsms.ui.platform.PendingCandidateUi
 import com.makia.hedgehogsms.ui.platform.PlatformFeatureScaffold
 import com.makia.hedgehogsms.ui.platform.PlatformNavigationEvent
@@ -62,6 +65,8 @@ import com.makia.hedgehogsms.ui.platform.PlatformScreensCallbacks
 import com.makia.hedgehogsms.ui.platform.PlatformScreensUiState
 import com.makia.hedgehogsms.ui.platform.PlatformSummaryUi
 import com.makia.hedgehogsms.ui.platform.PrimaryDestination
+import com.makia.hedgehogsms.ui.platform.isSensitiveScreen
+import com.makia.hedgehogsms.ui.platform.messageDetailUi
 import com.makia.hedgehogsms.ui.platform.reduce as reducePlatformNavigation
 import com.makia.hedgehogsms.ui.security.ClearResult
 import com.makia.hedgehogsms.ui.security.AndroidLocalDataClearer
@@ -188,8 +193,14 @@ private fun Inbox(
     var slots by remember { mutableStateOf<Map<Long, Int>?>(null) }
     var slotCount by remember { mutableStateOf(2) }
     var selected by remember { mutableStateOf<SmsRecord?>(null) }
+    var detailStatusText by remember { mutableStateOf<String?>(null) }
     var filter by remember { mutableStateOf(InboxFilter.ALL) }
     var newPlatformName by remember { mutableStateOf("") }
+    var selectedPendingLabel by remember { mutableStateOf<LabelChoiceUi?>(null) }
+    var createLabelDialogOpen by remember { mutableStateOf(false) }
+    var createLabelError by remember { mutableStateOf<String?>(null) }
+    var pendingSubmitInProgress by remember { mutableStateOf(false) }
+    var pendingSubmitError by remember { mutableStateOf<String?>(null) }
     var platformNavigation by remember { mutableStateOf(PlatformNavigationState()) }
     var labelDrafts by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     var governanceNotice by remember { mutableStateOf<String?>(null) }
@@ -205,7 +216,7 @@ private fun Inbox(
     val uiState by inboxViewModel.uiState.collectAsStateWithLifecycle()
     val scanRun = uiState.scanRun
     val indexedTotal = uiState.summary.total
-    val sensitiveContentVisible = selected != null || uiState.platformEvidence.isNotEmpty() || uiState.pendingMessage != null
+    val sensitiveContentVisible = platformNavigation.isSensitiveScreen()
     DisposableEffect(sensitiveContentVisible, privacy.protectSensitiveScreens, activity) {
         if (sensitiveContentVisible && privacy.protectSensitiveScreens) {
             activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
@@ -225,6 +236,26 @@ private fun Inbox(
             onPermissionUnavailable()
         }
     }
+    LaunchedEffect(platformNavigation.detail?.messageId) {
+        val detail = platformNavigation.detail
+        if (detail == null) {
+            selected = null
+            detailStatusText = null
+            return@LaunchedEffect
+        }
+        selected = null
+        detailStatusText = null
+        try {
+            val sms = container.smsSource.byId(detail.messageId)
+            if (sms == null) {
+                detailStatusText = "系统短信已删除"
+            } else {
+                selected = sms
+            }
+        } catch (_: SmsPermissionUnavailableException) {
+            detailStatusText = MESSAGE_DETAIL_PERMISSION_UNAVAILABLE
+        }
+    }
     val resolver = remember { SlotResolver() }
     val resolved = messages.associateWith { resolver.resolve(it.subscriptionId, slots, slotCount) }
     val filtered = messages.filter { sms ->
@@ -238,14 +269,20 @@ private fun Inbox(
     }
     val platformScreenState = PlatformScreensUiState(
         navigation = platformNavigation,
+        platformSlotFilter = uiState.platformSlotFilter,
+        messageDetail = messageDetailUi(
+            navigation = platformNavigation.detail,
+            senderText = selected?.sender,
+            body = selected?.body,
+            receivedAtText = selected?.let { java.text.DateFormat.getDateTimeInstance().format(java.util.Date(it.dateMillis)) },
+            statusText = detailStatusText,
+        ),
         platforms = uiState.platforms.map { platform ->
             PlatformSummaryUi(
                 id = platform.platformKey,
                 name = platform.displayName,
                 verificationCodeCount = platform.otpCount,
                 latestAtText = java.text.DateFormat.getDateTimeInstance().format(java.util.Date(platform.latestMessageDate)),
-                simAndSlotsText = "卡槽 1：${platform.slot1Count}  卡槽 2：${platform.slot2Count}  未知：${platform.unknownCount}",
-                confidenceText = "已分类；可进入证据短信核对",
             )
         },
         selectedPlatformName = uiState.selectedPlatform?.displayName.orEmpty(),
@@ -257,16 +294,41 @@ private fun Inbox(
                 simAndSlotText = "卡槽信息以扫描索引为准",
             )
         },
+        platformEvidenceLoading = uiState.platformEvidenceLoading,
+        platformEvidenceErrorText = uiState.platformEvidenceErrorText,
+        platformEvidencePermissionUnavailable = uiState.platformEvidencePermissionUnavailable,
         pendingCandidate = uiState.pendingMessage?.let { sms ->
+            val normalizedSearch = runCatching {
+                com.makia.hedgehogsms.classification.PlatformLabelNormalizer.comparisonKey(newPlatformName)
+            }.getOrNull()
+            val labels = uiState.labelPlatforms
+                .map {
+                    LabelChoiceUi(
+                        labelId = PlatformRuleClassifier.stablePlatformLabelId(it.displayName),
+                        platformKey = it.platformKey,
+                        displayName = it.displayName,
+                    )
+                }
+                .filter { label ->
+                    normalizedSearch == null ||
+                        com.makia.hedgehogsms.classification.PlatformLabelNormalizer.comparisonKey(label.displayName)
+                            .contains(normalizedSearch)
+                }
             PendingCandidateUi(
                 messageId = sms.id,
                 suggestedPlatform = null,
                 explanation = sms.body,
-                existingLabels = uiState.platforms.map { LabelChoiceUi(it.platformKey, it.displayName) },
-                newLabelDraft = newPlatformName,
+                existingLabels = labels,
+                labelSearchText = newPlatformName,
+                selectedLabel = selectedPendingLabel,
+                createDialogOpen = createLabelDialogOpen,
+                createError = createLabelError,
+                submitInProgress = pendingSubmitInProgress,
+                submitError = pendingSubmitError,
             )
         },
-        labels = uiState.platforms.map { platform ->
+        pendingPermissionUnavailable = uiState.pendingPermissionUnavailable,
+        labels = uiState.labelPlatforms.map { platform ->
             ManagedLabelUi(
                 id = platform.platformKey,
                 displayName = platform.displayName,
@@ -282,6 +344,8 @@ private fun Inbox(
                 is PlatformNavigationEvent.OpenPlatform -> uiState.platforms.firstOrNull { it.platformKey == event.platformId }
                     ?.let(inboxViewModel::loadPlatformEvidence)
                 PlatformNavigationEvent.ClosePlatform -> inboxViewModel.closePlatformEvidence()
+                PlatformNavigationEvent.CloseMessageDetail -> selected = null
+                is PlatformNavigationEvent.OpenMessageDetail -> Unit
                 is PlatformNavigationEvent.SelectDestination -> {
                     inboxViewModel.closePlatformEvidence()
                     if (event.destination == PrimaryDestination.PENDING && uiState.pendingMessage == null) {
@@ -292,27 +356,87 @@ private fun Inbox(
             platformNavigation = platformNavigation.reducePlatformNavigation(event)
         },
         onOpenEvidence = { messageId ->
-            selected = uiState.platformEvidence.firstOrNull { it.id == messageId }
-            inboxViewModel.closePlatformEvidence()
             platformNavigation = platformNavigation.reducePlatformNavigation(
-                PlatformNavigationEvent.SelectDestination(PrimaryDestination.MESSAGES),
+                PlatformNavigationEvent.OpenMessageDetail(
+                    messageId,
+                    MessageDetailSource.PlatformEvidence(uiState.selectedPlatform?.platformKey.orEmpty()),
+                ),
             )
         },
-        onAcceptSuggestedLabel = { governanceNotice = "当前没有可自动确认的平台候选，未执行标注。" },
-        onChooseExistingLabel = { _, labelId ->
-            uiState.platforms.firstOrNull { it.platformKey == labelId }?.let { inboxViewModel.confirmPendingLabel(it.displayName) }
+        onAcceptSuggestedLabel = { messageId ->
+            selectedPendingLabel?.let { label ->
+                pendingSubmitInProgress = true
+                pendingSubmitError = null
+                val started = inboxViewModel.confirmPendingLabel(messageId, label) { result ->
+                    pendingSubmitInProgress = false
+                    result
+                        .onSuccess {
+                            selectedPendingLabel = null
+                            newPlatformName = ""
+                            pendingSubmitError = null
+                        }
+                        .onFailure { error ->
+                            pendingSubmitError = error.message ?: "绑定训练失败，请重试"
+                        }
+                }
+                if (!started) {
+                    pendingSubmitInProgress = false
+                    pendingSubmitError = "候选短信已变化，请刷新后重试"
+                }
+            } ?: run { governanceNotice = "请先选择或快速创建一个标签。" }
+        },
+        onChooseExistingLabel = { _, label ->
+            selectedPendingLabel = label
+            pendingSubmitError = null
         },
         onCreateLabel = {
-            if (newPlatformName.isNotBlank()) {
-                inboxViewModel.confirmPendingLabel(newPlatformName)
-                newPlatformName = ""
+            val clean = runCatching {
+                com.makia.hedgehogsms.classification.PlatformLabelNormalizer.displayName(newPlatformName)
+            }.getOrNull()
+            if (clean == null) {
+                createLabelError = "标签名称不能为空"
+            } else {
+                val key = com.makia.hedgehogsms.classification.PlatformLabelNormalizer.comparisonKey(clean)
+                val duplicate = uiState.labelPlatforms.any {
+                    com.makia.hedgehogsms.classification.PlatformLabelNormalizer.comparisonKey(it.displayName) == key
+                }
+                if (duplicate) {
+                    createLabelError = "已存在同名标签，请选择已有标签"
+                } else {
+                    selectedPendingLabel = LabelChoiceUi(
+                        labelId = PlatformRuleClassifier.stablePlatformLabelId(clean),
+                        platformKey = PlatformRuleClassifier.stablePlatformKey(clean),
+                        displayName = clean,
+                    )
+                    newPlatformName = clean
+                    createLabelDialogOpen = false
+                    createLabelError = null
+                    pendingSubmitError = null
+                }
             }
         },
-        onNewLabelDraftChange = { newPlatformName = it },
+        onOpenCreateLabel = {
+            createLabelDialogOpen = true
+            createLabelError = null
+        },
+        onDismissCreateLabel = {
+            createLabelDialogOpen = false
+            createLabelError = null
+        },
+        onNewLabelDraftChange = {
+            newPlatformName = it
+            createLabelError = null
+            pendingSubmitError = null
+        },
+        onPlatformSlotFilterChange = { filter ->
+            inboxViewModel.selectPlatformSlotFilter(filter)
+            platformNavigation = platformNavigation.reducePlatformNavigation(PlatformNavigationEvent.ClosePlatform)
+        },
         onRenameDraftChange = { id, value -> labelDrafts = labelDrafts + (id to value) },
         onRenameLabel = { governanceNotice = "重命名前需要接通标签治理事务；当前未做更改。" },
         onMergeLabel = { governanceNotice = "请先选择要合并到的主标签；当前未做更改。" },
         onSplitLabel = { governanceNotice = "拆分需要逐条选择短信并重新标注；当前未做更改。" },
+        onRequestSmsPermission = onPermissionUnavailable,
     )
     PlatformFeatureScaffold(platformScreenState, platformCallbacks, modifier) { messagesModifier ->
       LazyColumn(messagesModifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -367,19 +491,6 @@ private fun Inbox(
         }
         if (state.phoneStateDegraded) item { Text("未授权电话状态，所有卡槽信息将显示为未知卡槽。") }
         if (state.receiveSmsDegraded) item { Text("新短信将在下次打开时补齐。") }
-        selected?.let { sms ->
-            item {
-                Card(Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(16.dp)) {
-                        Text("短信详情", style = MaterialTheme.typography.titleLarge)
-                        Text(sms.sender.orEmpty())
-                        Text(sms.body)
-                        Text("正文从系统信箱实时读取")
-                        Button(onClick = { selected = null }) { Text("返回列表") }
-                    }
-                }
-            }
-        }
         item { Text("最近短信", style = MaterialTheme.typography.headlineSmall) }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -397,18 +508,10 @@ private fun Inbox(
                     Text(sms.body)
                     Text(slot.slotIndex?.let { "卡槽 ${it + 1}" } ?: "未知卡槽")
                     Button(onClick = {
-                        selected = sms
+                        platformNavigation = platformNavigation.reducePlatformNavigation(
+                            PlatformNavigationEvent.OpenMessageDetail(sms.id, MessageDetailSource.Messages),
+                        )
                     }) { Text("查看详情") }
-                }
-            }
-            LaunchedEffect(selected?.id) {
-                if (selected?.id == sms.id) {
-                    try {
-                        selected = container.smsSource.byId(sms.id)
-                    } catch (_: SmsPermissionUnavailableException) {
-                        selected = null
-                        onPermissionUnavailable()
-                    }
                 }
             }
         }
@@ -431,6 +534,11 @@ private fun Inbox(
                     Text(sms.sender.orEmpty(), style = MaterialTheme.typography.titleMedium)
                     Text(sms.body)
                     Text("正文从系统信箱实时读取")
+                    Button(onClick = {
+                        platformNavigation = platformNavigation.reducePlatformNavigation(
+                            PlatformNavigationEvent.OpenMessageDetail(sms.id, MessageDetailSource.Messages),
+                        )
+                    }) { Text("查看详情") }
                 }
             }
         }
