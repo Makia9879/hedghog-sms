@@ -137,6 +137,48 @@ class PlatformUiContractTest {
         assertTrue(state.selectedPlatformEvidence.isEmpty())
     }
 
+    @Test fun `slot detail can expose indexed messages without platform summaries`() {
+        val message = EvidenceMessageUi(
+            messageId = 10,
+            senderText = "Bank",
+            receivedAtText = "2026-07-17 10:00",
+            simAndSlotText = "卡槽 1",
+        )
+        val state = PlatformScreensUiState(
+            navigation = PlatformNavigationState(
+                destination = PrimaryDestination.SLOTS,
+                selectedSlot = com.makia.hedgehogsms.classification.PlatformSlotFilter.SLOT_1,
+            ),
+            platforms = emptyList(),
+            selectedSlotMessages = listOf(message),
+            slots = listOf(
+                SlotCardUi(
+                    com.makia.hedgehogsms.classification.PlatformSlotFilter.SLOT_1,
+                    "卡槽 1",
+                    1,
+                ),
+            ),
+        )
+
+        assertTrue(state.platforms.isEmpty())
+        assertEquals(listOf(message), state.selectedSlotMessages)
+        assertEquals(1, state.slots.single().smsCount)
+    }
+
+    @Test fun `slot detail permission state carries no message bodies`() {
+        val state = PlatformScreensUiState(
+            navigation = PlatformNavigationState(
+                destination = PrimaryDestination.SLOTS,
+                selectedSlot = com.makia.hedgehogsms.classification.PlatformSlotFilter.UNKNOWN,
+            ),
+            selectedSlotMessages = emptyList(),
+            slotDetailPermissionUnavailable = true,
+        )
+
+        assertTrue(state.slotDetailPermissionUnavailable)
+        assertTrue(state.selectedSlotMessages.isEmpty())
+    }
+
     @Test fun `pending permission state carries no pending message body`() {
         val state = PlatformScreensUiState(
             navigation = PlatformNavigationState(destination = PrimaryDestination.PLATFORMS, pendingOpen = true),

@@ -1,5 +1,6 @@
 package com.makia.hedgehogsms.ui.platform
 
+import com.makia.hedgehogsms.classification.PlatformSlotFilter
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -32,5 +33,15 @@ class PlatformNavigationTest {
             .reduce(PlatformNavigationEvent.ClosePlatform)
         assertEquals(PrimaryDestination.PLATFORMS, state.destination)
         assertNull(state.selectedPlatformId)
+    }
+
+    @Test fun `opening message from slot detail returns to selected slot`() {
+        val state = PlatformNavigationState(destination = PrimaryDestination.SLOTS, selectedSlot = PlatformSlotFilter.SLOT_1)
+            .reduce(PlatformNavigationEvent.OpenMessageDetail(7, MessageDetailSource.SlotDetail(PlatformSlotFilter.SLOT_1)))
+            .reduce(PlatformNavigationEvent.CloseMessageDetail)
+
+        assertEquals(PrimaryDestination.SLOTS, state.destination)
+        assertEquals(PlatformSlotFilter.SLOT_1, state.selectedSlot)
+        assertNull(state.detail)
     }
 }

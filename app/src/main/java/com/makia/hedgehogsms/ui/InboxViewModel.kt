@@ -37,6 +37,11 @@ data class InboxUiState(
     val labelPlatforms: List<PlatformSummary> = emptyList(),
     val platformSlotFilter: PlatformSlotFilter = PlatformSlotFilter.ALL,
     val pendingLabelCount: Int = 0,
+    val selectedSlotFilter: PlatformSlotFilter? = null,
+    val slotDetailMessages: List<SmsRecord> = emptyList(),
+    val slotDetailLoading: Boolean = false,
+    val slotDetailErrorText: String? = null,
+    val slotDetailPermissionUnavailable: Boolean = false,
     val selectedPlatform: PlatformSummary? = null,
     val platformEvidence: List<SmsRecord> = emptyList(),
     val platformEvidenceLoading: Boolean = false,
@@ -149,6 +154,61 @@ class InboxViewModel(
         }
     }
 
+    fun loadSlotDetail(slotFilter: PlatformSlotFilter) {
+        viewModelScope.launch {
+            pageState.value = pageState.value.copy(
+                selectedSlotFilter = slotFilter,
+                slotDetailMessages = emptyList(),
+                slotDetailLoading = true,
+                slotDetailErrorText = null,
+                slotDetailPermissionUnavailable = false,
+            )
+            try {
+                val indexes = container.database.messageIndexDao()
+                    .pageBySlotFilter(slotFilter, PAGE_SIZE, 0)
+                val records = coroutineScope {
+                    indexes.map { index -> async { container.smsSource.byId(index.sourceMessageId) } }
+                        .awaitAll()
+                        .filterNotNull()
+                }
+                pageState.value = pageState.value.copy(
+                    selectedSlotFilter = slotFilter,
+                    slotDetailMessages = records,
+                    slotDetailLoading = false,
+                    slotDetailErrorText = null,
+                    slotDetailPermissionUnavailable = false,
+                )
+            } catch (_: SmsPermissionUnavailableException) {
+                pageState.value = pageState.value.copy(
+                    selectedSlotFilter = slotFilter,
+                    slotDetailMessages = emptyList(),
+                    slotDetailLoading = false,
+                    slotDetailErrorText = null,
+                    slotDetailPermissionUnavailable = true,
+                )
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                pageState.value = pageState.value.copy(
+                    selectedSlotFilter = slotFilter,
+                    slotDetailMessages = emptyList(),
+                    slotDetailLoading = false,
+                    slotDetailErrorText = "卡槽短信读取失败，请重试",
+                    slotDetailPermissionUnavailable = false,
+                )
+            }
+        }
+    }
+
+    fun closeSlotDetail() {
+        pageState.value = pageState.value.copy(
+            selectedSlotFilter = null,
+            slotDetailMessages = emptyList(),
+            slotDetailLoading = false,
+            slotDetailErrorText = null,
+            slotDetailPermissionUnavailable = false,
+        )
+    }
+
     fun closePlatformEvidence() {
         pageState.value = pageState.value.copy(
             selectedPlatform = null,
@@ -156,6 +216,11 @@ class InboxViewModel(
             platformEvidenceLoading = false,
             platformEvidenceErrorText = null,
             platformEvidencePermissionUnavailable = false,
+            selectedSlotFilter = null,
+            slotDetailMessages = emptyList(),
+            slotDetailLoading = false,
+            slotDetailErrorText = null,
+            slotDetailPermissionUnavailable = false,
         )
     }
 

@@ -338,6 +338,24 @@ private fun Inbox(
             SlotCardUi(com.makia.hedgehogsms.classification.PlatformSlotFilter.SLOT_2, "卡槽 2", uiState.summary.slot2),
             SlotCardUi(com.makia.hedgehogsms.classification.PlatformSlotFilter.UNKNOWN, "未知卡槽", uiState.summary.unknown),
         ),
+        selectedSlotMessages = uiState.slotDetailMessages.map { sms ->
+            EvidenceMessageUi(
+                messageId = sms.id,
+                senderText = sms.sender.orEmpty(),
+                receivedAtText = java.text.DateFormat.getDateTimeInstance().format(java.util.Date(sms.dateMillis)),
+                simAndSlotText = uiState.selectedSlotFilter?.let { slotFilter ->
+                    when (slotFilter) {
+                        com.makia.hedgehogsms.classification.PlatformSlotFilter.SLOT_1 -> "卡槽 1"
+                        com.makia.hedgehogsms.classification.PlatformSlotFilter.SLOT_2 -> "卡槽 2"
+                        com.makia.hedgehogsms.classification.PlatformSlotFilter.UNKNOWN -> "未知卡槽"
+                        com.makia.hedgehogsms.classification.PlatformSlotFilter.ALL -> "全部卡槽"
+                    }
+                } ?: "卡槽信息以扫描索引为准",
+            )
+        },
+        slotDetailLoading = uiState.slotDetailLoading,
+        slotDetailErrorText = uiState.slotDetailErrorText,
+        slotDetailPermissionUnavailable = uiState.slotDetailPermissionUnavailable,
         labels = uiState.labelPlatforms.map { platform ->
             ManagedLabelUi(
                 id = platform.platformKey,
@@ -358,13 +376,14 @@ private fun Inbox(
                 is PlatformNavigationEvent.OpenMessageDetail -> Unit
                 is PlatformNavigationEvent.SelectDestination -> {
                     inboxViewModel.closePlatformEvidence()
+                    inboxViewModel.closeSlotDetail()
                 }
                 PlatformNavigationEvent.OpenPendingLabels -> if (uiState.pendingMessage == null) inboxViewModel.loadPendingCandidate()
+                is PlatformNavigationEvent.OpenSlot -> inboxViewModel.loadSlotDetail(event.slot)
+                PlatformNavigationEvent.CloseSlot -> inboxViewModel.closeSlotDetail()
                 PlatformNavigationEvent.ClosePendingLabels,
-                PlatformNavigationEvent.CloseSlot,
                 PlatformNavigationEvent.CloseLabelDetail,
                 PlatformNavigationEvent.CloseLabelCreate -> Unit
-                is PlatformNavigationEvent.OpenSlot,
                 is PlatformNavigationEvent.OpenLabelDetail,
                 PlatformNavigationEvent.OpenLabelCreate -> Unit
             }
@@ -376,6 +395,11 @@ private fun Inbox(
                     messageId,
                     MessageDetailSource.PlatformEvidence(uiState.selectedPlatform?.platformKey.orEmpty()),
                 ),
+            )
+        },
+        onOpenSlotMessage = { messageId, slot ->
+            platformNavigation = platformNavigation.reducePlatformNavigation(
+                PlatformNavigationEvent.OpenMessageDetail(messageId, MessageDetailSource.SlotDetail(slot)),
             )
         },
         onAcceptSuggestedLabel = { messageId ->

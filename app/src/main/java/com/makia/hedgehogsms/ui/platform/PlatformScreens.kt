@@ -78,6 +78,7 @@ fun PlatformNavigationState.systemBackEvent(): PlatformNavigationEvent? = when {
 sealed interface MessageDetailSource {
     data object Scan : MessageDetailSource
     data class PlatformEvidence(val platformId: String) : MessageDetailSource
+    data class SlotDetail(val slot: PlatformSlotFilter) : MessageDetailSource
 }
 
 data class MessageDetailNavigation(
@@ -149,12 +150,22 @@ fun PlatformNavigationState.reduce(event: PlatformNavigationEvent): PlatformNavi
             selectedPlatformId = source.platformId,
             detail = MessageDetailNavigation(event.messageId, source),
         )
+        is MessageDetailSource.SlotDetail -> copy(
+            destination = PrimaryDestination.SLOTS,
+            selectedSlot = source.slot,
+            detail = MessageDetailNavigation(event.messageId, source),
+        )
     }
     PlatformNavigationEvent.CloseMessageDetail -> when (val source = detail?.source) {
         null, MessageDetailSource.Scan -> copy(destination = PrimaryDestination.SCAN, detail = null)
         is MessageDetailSource.PlatformEvidence -> copy(
             destination = PrimaryDestination.PLATFORMS,
             selectedPlatformId = source.platformId,
+            detail = null,
+        )
+        is MessageDetailSource.SlotDetail -> copy(
+            destination = PrimaryDestination.SLOTS,
+            selectedSlot = source.slot,
             detail = null,
         )
     }
@@ -230,6 +241,10 @@ data class PlatformScreensUiState(
     val pendingPermissionUnavailable: Boolean = false,
     val pendingLabelCount: Int = 0,
     val slots: List<SlotCardUi> = emptyList(),
+    val selectedSlotMessages: List<EvidenceMessageUi> = emptyList(),
+    val slotDetailLoading: Boolean = false,
+    val slotDetailErrorText: String? = null,
+    val slotDetailPermissionUnavailable: Boolean = false,
     val labels: List<ManagedLabelUi> = emptyList(),
     val actionNotice: String? = null,
 )
@@ -257,6 +272,7 @@ fun messageDetailUi(
         receivedAtText = if (statusText == null) receivedAtText.orEmpty() else "",
         sourceText = when (detail.source) {
             is MessageDetailSource.PlatformEvidence -> "来自平台详情"
+            is MessageDetailSource.SlotDetail -> "来自卡槽详情"
             MessageDetailSource.Scan -> "来自扫描页"
         },
         body = if (statusText == null) body else null,
@@ -274,6 +290,7 @@ data class PlatformScreensCallbacks(
     val onCreateLabel: (Long) -> Unit,
     val onNewLabelDraftChange: (String) -> Unit,
     val onPlatformSlotFilterChange: (PlatformSlotFilter) -> Unit,
+    val onOpenSlotMessage: (Long, PlatformSlotFilter) -> Unit = { _, _ -> },
     val onCreateStandaloneLabel: (String, List<LabelChoiceUi>) -> Unit = { _, _ -> },
     val onRequestSmsPermission: () -> Unit,
     val onOpenCreateLabel: (Long) -> Unit = {},
@@ -337,7 +354,10 @@ fun PlatformFeatureScaffold(
             state.navigation.selectedSlot != null -> SlotDetailScreen(
                 state.navigation.selectedSlot,
                 state.slots.firstOrNull { it.filter == state.navigation.selectedSlot },
-                state.platforms,
+                state.selectedSlotMessages,
+                state.slotDetailLoading,
+                state.slotDetailErrorText,
+                state.slotDetailPermissionUnavailable,
                 callbacks,
                 contentModifier,
             )
@@ -578,29 +598,34 @@ fun SlotListScreen(slots: List<SlotCardUi>, callbacks: PlatformScreensCallbacks,
 fun SlotDetailScreen(
     slot: PlatformSlotFilter?,
     slotCard: SlotCardUi?,
-    platforms: List<PlatformSummaryUi>,
+    messages: List<EvidenceMessageUi>,
+    loading: Boolean,
+    errorText: String?,
+    permissionUnavailable: Boolean,
     callbacks: PlatformScreensCallbacks,
     modifier: Modifier = Modifier,
 ) {
-    val visiblePlatforms = when (slot) {
-        PlatformSlotFilter.SLOT_1 -> platforms.filter { it.slot1Count > 0 }
-        PlatformSlotFilter.SLOT_2 -> platforms.filter { it.slot2Count > 0 }
-        PlatformSlotFilter.UNKNOWN -> platforms.filter { it.unknownCount > 0 }
-        else -> platforms
-    }
     LazyColumn(modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item { TextButton(onClick = { callbacks.onNavigation(PlatformNavigationEvent.CloseSlot) }) { Text("返回") } }
         item { Text(slotCard?.name ?: "卡槽详情", style = MaterialTheme.typography.headlineMedium) }
         item { Text("短信数量 ${slotCard?.smsCount ?: 0}") }
-        if (visiblePlatforms.isEmpty()) item { Text("此卡槽暂无对应平台。") }
-        items(visiblePlatforms, key = { it.id }) { platform ->
+        if (loading) item {
+            Text("正在读取卡槽短信...")
+        } else if (permissionUnavailable) item {
+            Text(MESSAGE_DETAIL_PERMISSION_UNAVAILABLE)
+            Button(onClick = callbacks.onRequestSmsPermission) { Text("重新授权") }
+        } else if (errorText != null) item {
+            Text(errorText)
+        } else if (messages.isEmpty()) item { Text("此卡槽暂无可展示短信。") }
+        items(messages, key = { it.messageId }) { message ->
             Card(Modifier.fillMaxWidth().clickable {
-                slot?.let(callbacks.onPlatformSlotFilterChange)
-                callbacks.onNavigation(PlatformNavigationEvent.OpenPlatform(platform.id))
+                slot?.let { callbacks.onOpenSlotMessage(message.messageId, it) }
             }) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(platform.name, style = MaterialTheme.typography.titleMedium)
-                    Text("验证码 ${platform.verificationCodeCount} 条 · 最近 ${platform.latestAtText}")
+                    Text(message.senderText, style = MaterialTheme.typography.titleMedium)
+                    Text(message.receivedAtText)
+                    Text(message.simAndSlotText)
+                    Text(message.availabilityText)
                 }
             }
         }

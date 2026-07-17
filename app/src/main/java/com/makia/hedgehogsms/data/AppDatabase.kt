@@ -45,6 +45,21 @@ interface MessageIndexDao {
     @Query("SELECT * FROM message_index ORDER BY messageDate DESC, sourceMessageId DESC LIMIT :limit OFFSET :offset")
     suspend fun page(limit: Int, offset: Int): List<MessageIndex>
 
+    suspend fun pageBySlotFilter(slotFilter: PlatformSlotFilter, limit: Int, offset: Int): List<MessageIndex> =
+        pageBySlotFilter(slotFilter.name, limit, offset)
+
+    @Query("""
+        SELECT * FROM message_index
+        WHERE (
+          :slotFilter='ALL'
+          OR (:slotFilter='SLOT_1' AND slotSnapshotIndex=0 AND slotMappingStatus='RESOLVED')
+          OR (:slotFilter='SLOT_2' AND slotSnapshotIndex=1 AND slotMappingStatus='RESOLVED')
+          OR (:slotFilter='UNKNOWN' AND (slotMappingStatus!='RESOLVED' OR slotSnapshotIndex IS NULL OR slotSnapshotIndex NOT IN (0,1)))
+        )
+        ORDER BY messageDate DESC, sourceMessageId DESC LIMIT :limit OFFSET :offset
+    """)
+    suspend fun pageBySlotFilter(slotFilter: String, limit: Int, offset: Int): List<MessageIndex>
+
 }
 
 @Dao
