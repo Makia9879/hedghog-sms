@@ -9,6 +9,7 @@ import androidx.work.ExistingWorkPolicy
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
+import androidx.work.workDataOf
 import com.makia.hedgehogsms.HedgehogApplication
 import com.makia.hedgehogsms.data.ScanRun
 import com.makia.hedgehogsms.data.ScanStatus
@@ -78,6 +79,9 @@ class HistoryScanWorker(context: Context, params: WorkerParameters) : CoroutineW
         val app = applicationContext as HedgehogApplication
         val container = app.container
         val runDao = container.database.scanRunDao()
+        val pacing = HistoryScanPacing()
+        var processedThisSlice = 0
+        var hitTimeBudget = false
         var run = runDao.get() ?: return Result.success()
         if (run.status !in setOf(ScanStatus.RUNNING, ScanStatus.WAITING_BATTERY, ScanStatus.WAITING_THERMAL)) return Result.success()
         val expectedGeneration = run.generation
@@ -87,7 +91,10 @@ class HistoryScanWorker(context: Context, params: WorkerParameters) : CoroutineW
         // Append the next slice before touching the provider. If this process is
         // killed after committing a page, the durable WorkManager chain still
         // owns a continuation. A successor that observes COMPLETED is a no-op.
-        HistoryScanCoordinator(applicationContext).enqueue(ExistingWorkPolicy.APPEND_OR_REPLACE, 15)
+        HistoryScanCoordinator(applicationContext).enqueue(
+            ExistingWorkPolicy.APPEND_OR_REPLACE,
+            pacing.continuationDelaySeconds(previousSliceMetrics()),
+        )
         val resolver = SlotResolver()
         val classifier = PlatformClassificationService(container)
         val snapshot = container.subscriptionSource.snapshot()
@@ -116,12 +123,12 @@ class HistoryScanWorker(context: Context, params: WorkerParameters) : CoroutineW
             }
 
             var pages = 0
-            while (pages < 4 && (System.nanoTime() - started) / 1_000_000_000 < 5) {
+            while (pacing.shouldContinue(pages, started, System.nanoTime())) {
                 val latest = runDao.get() ?: return Result.success()
                 if (latest.generation != expectedGeneration || latest.status != ScanStatus.RUNNING) return Result.success()
                 val page = container.smsSource.page(
                     latest.cursorDate?.let { SmsKeyset(it, latest.cursorId!!) },
-                    25,
+                    pacing.pageSize,
                     SmsFence(latest.upperDate!!, latest.upperId!!),
                 )
                 val now = System.currentTimeMillis()
@@ -129,6 +136,7 @@ class HistoryScanWorker(context: Context, params: WorkerParameters) : CoroutineW
                 val classifications = page.map { classifier.classify(it, now) }
                 var committed = false
                 var completed = false
+                val pageCompletedScan = pacing.completedByPageSize(page.size)
                 container.database.withTransaction {
                     val fenced = runDao.get() ?: return@withTransaction
                     if (fenced.generation != expectedGeneration || fenced.status != ScanStatus.RUNNING) return@withTransaction
@@ -139,16 +147,19 @@ class HistoryScanWorker(context: Context, params: WorkerParameters) : CoroutineW
                         cursorDate = last?.dateMillis ?: fenced.cursorDate,
                         cursorId = last?.id ?: fenced.cursorId,
                         processed = fenced.processed + page.size,
-                        status = if (page.size < 25) ScanStatus.COMPLETED else ScanStatus.RUNNING,
+                        status = if (pageCompletedScan) ScanStatus.COMPLETED else ScanStatus.RUNNING,
                         updatedAt = now,
-                        completedAt = if (page.size < 25) now else null,
+                        completedAt = if (pageCompletedScan) now else null,
                     ))
                     committed = true
-                    completed = page.size < 25
+                    completed = pageCompletedScan
                 }
-                if (!committed || completed) return Result.success()
+                if (!committed) return sliceSuccess(processedThisSlice, started, hitTimeBudget)
+                processedThisSlice += page.size
+                if (completed) return sliceSuccess(processedThisSlice, started, hitTimeBudget)
                 pages++
             }
+            hitTimeBudget = ((System.nanoTime() - started).coerceAtLeast(0L)) / 1_000_000 >= pacing.sliceBudgetMillis
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: SmsPermissionUnavailableException) {
@@ -161,6 +172,27 @@ class HistoryScanWorker(context: Context, params: WorkerParameters) : CoroutineW
             runDao.finishIfRunning(expectedGeneration, ScanStatus.FAILED, error.javaClass.simpleName, null, now)
             return Result.failure()
         }
-        return Result.success()
+        return sliceSuccess(processedThisSlice, started, hitTimeBudget)
+    }
+
+    private fun previousSliceMetrics(): HistoryScanSliceMetrics = HistoryScanSliceMetrics(
+        processedMessages = inputData.getInt(KEY_PROCESSED_MESSAGES, 0),
+        elapsedMillis = inputData.getLong(KEY_ELAPSED_MILLIS, 0),
+        hitTimeBudget = inputData.getBoolean(KEY_HIT_TIME_BUDGET, false),
+    )
+
+    private fun sliceSuccess(processedMessages: Int, startedNanos: Long, hitTimeBudget: Boolean): Result {
+        val elapsedMillis = ((System.nanoTime() - startedNanos).coerceAtLeast(0L)) / 1_000_000
+        return Result.success(workDataOf(
+            KEY_PROCESSED_MESSAGES to processedMessages,
+            KEY_ELAPSED_MILLIS to elapsedMillis,
+            KEY_HIT_TIME_BUDGET to hitTimeBudget,
+        ))
+    }
+
+    companion object {
+        private const val KEY_PROCESSED_MESSAGES = "processedMessages"
+        private const val KEY_ELAPSED_MILLIS = "elapsedMillis"
+        private const val KEY_HIT_TIME_BUDGET = "hitTimeBudget"
     }
 }
