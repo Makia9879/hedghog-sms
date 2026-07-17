@@ -139,7 +139,7 @@ class PlatformUiContractTest {
 
     @Test fun `pending permission state carries no pending message body`() {
         val state = PlatformScreensUiState(
-            navigation = PlatformNavigationState(destination = PrimaryDestination.PENDING),
+            navigation = PlatformNavigationState(destination = PrimaryDestination.PLATFORMS, pendingOpen = true),
             pendingCandidate = null,
             pendingPermissionUnavailable = true,
         )

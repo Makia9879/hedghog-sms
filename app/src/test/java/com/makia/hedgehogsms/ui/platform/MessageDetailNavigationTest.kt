@@ -6,13 +6,13 @@ import org.junit.Test
 
 class MessageDetailNavigationTest {
     @Test fun `closing detail from messages restores message source`() {
-        val before = PlatformNavigationState(destination = PrimaryDestination.MESSAGES)
-        val open = before.reduce(PlatformNavigationEvent.OpenMessageDetail(7, MessageDetailSource.Messages))
+        val before = PlatformNavigationState(destination = PrimaryDestination.SCAN)
+        val open = before.reduce(PlatformNavigationEvent.OpenMessageDetail(7, MessageDetailSource.Scan))
 
         val closed = open.reduce(PlatformNavigationEvent.CloseMessageDetail)
 
         assertNull(closed.detail)
-        assertEquals(PrimaryDestination.MESSAGES, closed.destination)
+        assertEquals(PrimaryDestination.SCAN, closed.destination)
         assertNull(closed.selectedPlatformId)
     }
 
@@ -31,13 +31,13 @@ class MessageDetailNavigationTest {
     }
 
     @Test fun `only sensitive destinations request screenshot protection`() {
-        assertEquals(false, PlatformNavigationState(destination = PrimaryDestination.MESSAGES).isSensitiveScreen())
-        assertEquals(true, PlatformNavigationState(destination = PrimaryDestination.PENDING).isSensitiveScreen())
+        assertEquals(false, PlatformNavigationState(destination = PrimaryDestination.SCAN).isSensitiveScreen())
+        assertEquals(true, PlatformNavigationState(destination = PrimaryDestination.PLATFORMS, pendingOpen = true).isSensitiveScreen())
         assertEquals(true, PlatformNavigationState(destination = PrimaryDestination.PLATFORMS, selectedPlatformId = "bank").isSensitiveScreen())
         assertEquals(
             true,
-            PlatformNavigationState(destination = PrimaryDestination.MESSAGES)
-                .reduce(PlatformNavigationEvent.OpenMessageDetail(7, MessageDetailSource.Messages))
+            PlatformNavigationState(destination = PrimaryDestination.SCAN)
+                .reduce(PlatformNavigationEvent.OpenMessageDetail(7, MessageDetailSource.Scan))
                 .isSensitiveScreen(),
         )
     }
@@ -81,8 +81,9 @@ class MessageDetailNavigationTest {
     }
 
     @Test fun `system back is not intercepted on top level pages`() {
-        assertNull(PlatformNavigationState(destination = PrimaryDestination.MESSAGES).systemBackEvent())
+        assertNull(PlatformNavigationState(destination = PrimaryDestination.SCAN).systemBackEvent())
         assertNull(PlatformNavigationState(destination = PrimaryDestination.PLATFORMS).systemBackEvent())
-        assertNull(PlatformNavigationState(destination = PrimaryDestination.PENDING).systemBackEvent())
+        assertNull(PlatformNavigationState(destination = PrimaryDestination.SLOTS).systemBackEvent())
+        assertNull(PlatformNavigationState(destination = PrimaryDestination.LABELS).systemBackEvent())
     }
 }

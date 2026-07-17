@@ -13,9 +13,18 @@ class PlatformNavigationTest {
 
     @Test fun `switching primary tab closes nested platform detail`() {
         val state = PlatformNavigationState(PrimaryDestination.PLATFORMS, "bank")
-            .reduce(PlatformNavigationEvent.SelectDestination(PrimaryDestination.PENDING))
-        assertEquals(PrimaryDestination.PENDING, state.destination)
+            .reduce(PlatformNavigationEvent.SelectDestination(PrimaryDestination.SLOTS))
+        assertEquals(PrimaryDestination.SLOTS, state.destination)
         assertNull(state.selectedPlatformId)
+    }
+
+    @Test fun `opening pending labels hides bottom navigation without adding a primary tab`() {
+        val state = PlatformNavigationState()
+            .reduce(PlatformNavigationEvent.OpenPendingLabels)
+
+        assertEquals(PrimaryDestination.PLATFORMS, state.destination)
+        assertEquals(true, state.pendingOpen)
+        assertEquals(true, state.hidesBottomBar)
     }
 
     @Test fun `back from evidence keeps platform primary destination`() {
