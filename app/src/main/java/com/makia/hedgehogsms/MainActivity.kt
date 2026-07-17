@@ -65,6 +65,7 @@ import com.makia.hedgehogsms.ui.platform.PlatformScreensCallbacks
 import com.makia.hedgehogsms.ui.platform.PlatformScreensUiState
 import com.makia.hedgehogsms.ui.platform.PlatformSummaryUi
 import com.makia.hedgehogsms.ui.platform.PrimaryDestination
+import com.makia.hedgehogsms.ui.platform.SlotCardUi
 import com.makia.hedgehogsms.ui.platform.isSensitiveScreen
 import com.makia.hedgehogsms.ui.platform.messageDetailUi
 import com.makia.hedgehogsms.ui.platform.reduce as reducePlatformNavigation
@@ -283,6 +284,9 @@ private fun Inbox(
                 name = platform.displayName,
                 verificationCodeCount = platform.otpCount,
                 latestAtText = java.text.DateFormat.getDateTimeInstance().format(java.util.Date(platform.latestMessageDate)),
+                slot1Count = platform.slot1Count,
+                slot2Count = platform.slot2Count,
+                unknownCount = platform.unknownCount,
             )
         },
         selectedPlatformName = uiState.selectedPlatform?.displayName.orEmpty(),
@@ -328,6 +332,12 @@ private fun Inbox(
             )
         },
         pendingPermissionUnavailable = uiState.pendingPermissionUnavailable,
+        pendingLabelCount = uiState.pendingLabelCount,
+        slots = listOf(
+            SlotCardUi(com.makia.hedgehogsms.classification.PlatformSlotFilter.SLOT_1, "卡槽 1", uiState.summary.slot1),
+            SlotCardUi(com.makia.hedgehogsms.classification.PlatformSlotFilter.SLOT_2, "卡槽 2", uiState.summary.slot2),
+            SlotCardUi(com.makia.hedgehogsms.classification.PlatformSlotFilter.UNKNOWN, "未知卡槽", uiState.summary.unknown),
+        ),
         labels = uiState.labelPlatforms.map { platform ->
             ManagedLabelUi(
                 id = platform.platformKey,
@@ -348,10 +358,15 @@ private fun Inbox(
                 is PlatformNavigationEvent.OpenMessageDetail -> Unit
                 is PlatformNavigationEvent.SelectDestination -> {
                     inboxViewModel.closePlatformEvidence()
-                    if (event.destination == PrimaryDestination.PENDING && uiState.pendingMessage == null) {
-                        inboxViewModel.loadPendingCandidate()
-                    }
                 }
+                PlatformNavigationEvent.OpenPendingLabels -> if (uiState.pendingMessage == null) inboxViewModel.loadPendingCandidate()
+                PlatformNavigationEvent.ClosePendingLabels,
+                PlatformNavigationEvent.CloseSlot,
+                PlatformNavigationEvent.CloseLabelDetail,
+                PlatformNavigationEvent.CloseLabelCreate -> Unit
+                is PlatformNavigationEvent.OpenSlot,
+                is PlatformNavigationEvent.OpenLabelDetail,
+                PlatformNavigationEvent.OpenLabelCreate -> Unit
             }
             platformNavigation = platformNavigation.reducePlatformNavigation(event)
         },
@@ -387,6 +402,11 @@ private fun Inbox(
         },
         onChooseExistingLabel = { _, label ->
             selectedPendingLabel = label
+            pendingSubmitError = null
+        },
+        onConfirmPendingSelection = { label ->
+            selectedPendingLabel = label
+            newPlatformName = label.displayName
             pendingSubmitError = null
         },
         onCreateLabel = {
@@ -431,6 +451,26 @@ private fun Inbox(
         onPlatformSlotFilterChange = { filter ->
             inboxViewModel.selectPlatformSlotFilter(filter)
             platformNavigation = platformNavigation.reducePlatformNavigation(PlatformNavigationEvent.ClosePlatform)
+        },
+        onCreateStandaloneLabel = { name, mergedLabels ->
+            val clean = runCatching {
+                com.makia.hedgehogsms.classification.PlatformLabelNormalizer.displayName(name)
+            }.getOrNull()
+            if (clean == null) {
+                governanceNotice = "标签名称不能为空"
+            } else {
+                val key = com.makia.hedgehogsms.classification.PlatformLabelNormalizer.comparisonKey(clean)
+                val duplicate = uiState.labelPlatforms.any {
+                    com.makia.hedgehogsms.classification.PlatformLabelNormalizer.comparisonKey(it.displayName) == key
+                }
+                governanceNotice = if (duplicate) {
+                    "已存在同名标签，请选择已有标签。"
+                } else if (mergedLabels.isEmpty()) {
+                    "已准备创建标签：$clean。完整标签实体持久化待接入。"
+                } else {
+                    "已准备创建标签：$clean，并合并 ${mergedLabels.joinToString(",") { it.displayName }} 的短信集合。"
+                }
+            }
         },
         onRenameDraftChange = { id, value -> labelDrafts = labelDrafts + (id to value) },
         onRenameLabel = { governanceNotice = "重命名前需要接通标签治理事务；当前未做更改。" },
@@ -491,6 +531,7 @@ private fun Inbox(
         }
         if (state.phoneStateDegraded) item { Text("未授权电话状态，所有卡槽信息将显示为未知卡槽。") }
         if (state.receiveSmsDegraded) item { Text("新短信将在下次打开时补齐。") }
+        return@LazyColumn
         item { Text("最近短信", style = MaterialTheme.typography.headlineSmall) }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -509,7 +550,7 @@ private fun Inbox(
                     Text(slot.slotIndex?.let { "卡槽 ${it + 1}" } ?: "未知卡槽")
                     Button(onClick = {
                         platformNavigation = platformNavigation.reducePlatformNavigation(
-                            PlatformNavigationEvent.OpenMessageDetail(sms.id, MessageDetailSource.Messages),
+                            PlatformNavigationEvent.OpenMessageDetail(sms.id, MessageDetailSource.Scan),
                         )
                     }) { Text("查看详情") }
                 }
@@ -536,7 +577,7 @@ private fun Inbox(
                     Text("正文从系统信箱实时读取")
                     Button(onClick = {
                         platformNavigation = platformNavigation.reducePlatformNavigation(
-                            PlatformNavigationEvent.OpenMessageDetail(sms.id, MessageDetailSource.Messages),
+                            PlatformNavigationEvent.OpenMessageDetail(sms.id, MessageDetailSource.Scan),
                         )
                     }) { Text("查看详情") }
                 }

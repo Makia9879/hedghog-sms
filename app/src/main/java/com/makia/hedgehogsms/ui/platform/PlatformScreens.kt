@@ -1,7 +1,9 @@
 package com.makia.hedgehogsms.ui.platform
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -12,7 +14,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -21,31 +22,61 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import com.makia.hedgehogsms.classification.PlatformSlotFilter
 
 enum class PrimaryDestination(val label: String) {
-    MESSAGES("短信"), PLATFORMS("平台"), PENDING("待标注"), LABELS("标签"),
+    SCAN("扫描"),
+    PLATFORMS("查看平台列表"),
+    SLOTS("查看卡槽"),
+    LABELS("查看标签"),
 }
 
 data class PlatformNavigationState(
-    val destination: PrimaryDestination = PrimaryDestination.MESSAGES,
+    val destination: PrimaryDestination = PrimaryDestination.SCAN,
     val selectedPlatformId: String? = null,
+    val selectedSlot: PlatformSlotFilter? = null,
+    val pendingOpen: Boolean = false,
+    val selectedLabelId: String? = null,
+    val labelCreateOpen: Boolean = false,
     val detail: MessageDetailNavigation? = null,
-)
+) {
+    val hidesBottomBar: Boolean
+        get() = selectedPlatformId != null ||
+            selectedSlot != null ||
+            pendingOpen ||
+            selectedLabelId != null ||
+            labelCreateOpen ||
+            detail != null
+}
 
 fun PlatformNavigationState.isSensitiveScreen(): Boolean =
-    detail != null || selectedPlatformId != null || destination == PrimaryDestination.PENDING
+    detail != null || selectedPlatformId != null || pendingOpen
 
 fun PlatformNavigationState.systemBackEvent(): PlatformNavigationEvent? = when {
     detail != null -> PlatformNavigationEvent.CloseMessageDetail
     selectedPlatformId != null -> PlatformNavigationEvent.ClosePlatform
+    selectedSlot != null -> PlatformNavigationEvent.CloseSlot
+    pendingOpen -> PlatformNavigationEvent.ClosePendingLabels
+    selectedLabelId != null -> PlatformNavigationEvent.CloseLabelDetail
+    labelCreateOpen -> PlatformNavigationEvent.CloseLabelCreate
     else -> null
 }
 
 sealed interface MessageDetailSource {
-    data object Messages : MessageDetailSource
+    data object Scan : MessageDetailSource
     data class PlatformEvidence(val platformId: String) : MessageDetailSource
 }
 
@@ -58,17 +89,59 @@ sealed interface PlatformNavigationEvent {
     data class SelectDestination(val destination: PrimaryDestination) : PlatformNavigationEvent
     data class OpenPlatform(val platformId: String) : PlatformNavigationEvent
     data object ClosePlatform : PlatformNavigationEvent
+    data class OpenSlot(val slot: PlatformSlotFilter) : PlatformNavigationEvent
+    data object CloseSlot : PlatformNavigationEvent
+    data object OpenPendingLabels : PlatformNavigationEvent
+    data object ClosePendingLabels : PlatformNavigationEvent
+    data class OpenLabelDetail(val labelId: String) : PlatformNavigationEvent
+    data object CloseLabelDetail : PlatformNavigationEvent
+    data object OpenLabelCreate : PlatformNavigationEvent
+    data object CloseLabelCreate : PlatformNavigationEvent
     data class OpenMessageDetail(val messageId: Long, val source: MessageDetailSource) : PlatformNavigationEvent
     data object CloseMessageDetail : PlatformNavigationEvent
 }
 
 fun PlatformNavigationState.reduce(event: PlatformNavigationEvent): PlatformNavigationState = when (event) {
-    is PlatformNavigationEvent.SelectDestination -> copy(destination = event.destination, selectedPlatformId = null, detail = null)
-    is PlatformNavigationEvent.OpenPlatform -> copy(destination = PrimaryDestination.PLATFORMS, selectedPlatformId = event.platformId, detail = null)
-    PlatformNavigationEvent.ClosePlatform -> copy(selectedPlatformId = null)
+    is PlatformNavigationEvent.SelectDestination -> PlatformNavigationState(destination = event.destination)
+    is PlatformNavigationEvent.OpenPlatform -> copy(
+        destination = PrimaryDestination.PLATFORMS,
+        selectedPlatformId = event.platformId,
+        detail = null,
+        pendingOpen = false,
+        selectedLabelId = null,
+        labelCreateOpen = false,
+    )
+    PlatformNavigationEvent.ClosePlatform -> copy(selectedPlatformId = null, detail = null)
+    is PlatformNavigationEvent.OpenSlot -> copy(
+        destination = PrimaryDestination.SLOTS,
+        selectedSlot = event.slot,
+        selectedPlatformId = null,
+        detail = null,
+    )
+    PlatformNavigationEvent.CloseSlot -> copy(selectedSlot = null, selectedPlatformId = null, detail = null)
+    PlatformNavigationEvent.OpenPendingLabels -> copy(
+        destination = PrimaryDestination.PLATFORMS,
+        pendingOpen = true,
+        selectedPlatformId = null,
+        selectedSlot = null,
+        detail = null,
+    )
+    PlatformNavigationEvent.ClosePendingLabels -> copy(pendingOpen = false)
+    is PlatformNavigationEvent.OpenLabelDetail -> copy(
+        destination = PrimaryDestination.LABELS,
+        selectedLabelId = event.labelId,
+        labelCreateOpen = false,
+    )
+    PlatformNavigationEvent.CloseLabelDetail -> copy(selectedLabelId = null)
+    PlatformNavigationEvent.OpenLabelCreate -> copy(
+        destination = PrimaryDestination.LABELS,
+        labelCreateOpen = true,
+        selectedLabelId = null,
+    )
+    PlatformNavigationEvent.CloseLabelCreate -> copy(labelCreateOpen = false)
     is PlatformNavigationEvent.OpenMessageDetail -> when (val source = event.source) {
-        MessageDetailSource.Messages -> copy(
-            destination = PrimaryDestination.MESSAGES,
+        MessageDetailSource.Scan -> copy(
+            destination = PrimaryDestination.SCAN,
             detail = MessageDetailNavigation(event.messageId, source),
         )
         is MessageDetailSource.PlatformEvidence -> copy(
@@ -78,7 +151,7 @@ fun PlatformNavigationState.reduce(event: PlatformNavigationEvent): PlatformNavi
         )
     }
     PlatformNavigationEvent.CloseMessageDetail -> when (val source = detail?.source) {
-        null, MessageDetailSource.Messages -> copy(destination = PrimaryDestination.MESSAGES, detail = null)
+        null, MessageDetailSource.Scan -> copy(destination = PrimaryDestination.SCAN, detail = null)
         is MessageDetailSource.PlatformEvidence -> copy(
             destination = PrimaryDestination.PLATFORMS,
             selectedPlatformId = source.platformId,
@@ -92,6 +165,15 @@ data class PlatformSummaryUi(
     val name: String,
     val verificationCodeCount: Int,
     val latestAtText: String,
+    val slot1Count: Int = 0,
+    val slot2Count: Int = 0,
+    val unknownCount: Int = 0,
+)
+
+data class SlotCardUi(
+    val filter: PlatformSlotFilter,
+    val name: String,
+    val smsCount: Int,
 )
 
 data class EvidenceMessageUi(
@@ -146,6 +228,8 @@ data class PlatformScreensUiState(
     val platformEvidencePermissionUnavailable: Boolean = false,
     val pendingCandidate: PendingCandidateUi? = null,
     val pendingPermissionUnavailable: Boolean = false,
+    val pendingLabelCount: Int = 0,
+    val slots: List<SlotCardUi> = emptyList(),
     val labels: List<ManagedLabelUi> = emptyList(),
     val actionNotice: String? = null,
 )
@@ -172,8 +256,8 @@ fun messageDetailUi(
         senderText = if (statusText == null) senderText.orEmpty() else "",
         receivedAtText = if (statusText == null) receivedAtText.orEmpty() else "",
         sourceText = when (detail.source) {
-            is MessageDetailSource.PlatformEvidence -> "来自平台证据"
-            MessageDetailSource.Messages -> "来自短信列表"
+            is MessageDetailSource.PlatformEvidence -> "来自平台详情"
+            MessageDetailSource.Scan -> "来自扫描页"
         },
         body = if (statusText == null) body else null,
         statusText = statusText,
@@ -185,17 +269,19 @@ data class PlatformScreensCallbacks(
     val onNavigation: (PlatformNavigationEvent) -> Unit,
     val onOpenEvidence: (Long) -> Unit,
     val onAcceptSuggestedLabel: (Long) -> Unit,
-    val onChooseExistingLabel: (Long, LabelChoiceUi) -> Unit,
+    val onChooseExistingLabel: (Long, LabelChoiceUi?) -> Unit,
+    val onConfirmPendingSelection: (LabelChoiceUi) -> Unit = {},
     val onCreateLabel: (Long) -> Unit,
-    val onOpenCreateLabel: (Long) -> Unit,
-    val onDismissCreateLabel: () -> Unit,
     val onNewLabelDraftChange: (String) -> Unit,
     val onPlatformSlotFilterChange: (PlatformSlotFilter) -> Unit,
-    val onRenameDraftChange: (String, String) -> Unit,
-    val onRenameLabel: (String) -> Unit,
-    val onMergeLabel: (String) -> Unit,
-    val onSplitLabel: (String) -> Unit,
+    val onCreateStandaloneLabel: (String, List<LabelChoiceUi>) -> Unit = { _, _ -> },
     val onRequestSmsPermission: () -> Unit,
+    val onOpenCreateLabel: (Long) -> Unit = {},
+    val onDismissCreateLabel: () -> Unit = {},
+    val onRenameDraftChange: (String, String) -> Unit = { _, _ -> },
+    val onRenameLabel: (String) -> Unit = {},
+    val onMergeLabel: (String) -> Unit = {},
+    val onSplitLabel: (String) -> Unit = {},
 )
 
 @Composable
@@ -203,59 +289,70 @@ fun PlatformFeatureScaffold(
     state: PlatformScreensUiState,
     callbacks: PlatformScreensCallbacks,
     modifier: Modifier = Modifier,
-    messagesContent: @Composable (Modifier) -> Unit,
+    scanContent: @Composable (Modifier) -> Unit,
 ) {
     BackHandler(enabled = state.navigation.systemBackEvent() != null) {
         state.navigation.systemBackEvent()?.let(callbacks.onNavigation)
     }
+    val showBottomBar = !state.navigation.hidesBottomBar
     Scaffold(
         modifier = modifier,
         bottomBar = {
-            NavigationBar {
-                PrimaryDestination.entries.forEach { destination ->
-                    NavigationBarItem(
-                        selected = state.navigation.destination == destination,
-                        onClick = { callbacks.onNavigation(PlatformNavigationEvent.SelectDestination(destination)) },
-                        icon = { Text(destination.label.take(1)) },
-                        label = { Text(destination.label) },
-                    )
+            if (showBottomBar) {
+                NavigationBar {
+                    PrimaryDestination.entries.forEach { destination ->
+                        NavigationBarItem(
+                            selected = state.navigation.destination == destination,
+                            onClick = { callbacks.onNavigation(PlatformNavigationEvent.SelectDestination(destination)) },
+                            icon = { Text(destination.label.take(1)) },
+                            label = { Text(destination.label) },
+                        )
+                    }
                 }
             }
         },
     ) { padding ->
-        val contentModifier = Modifier.padding(padding)
+        val contentModifier = if (showBottomBar) Modifier.padding(padding) else Modifier
         if (state.navigation.detail != null) {
             MessageDetailScreen(state.messageDetail, callbacks.onNavigation, callbacks.onRequestSmsPermission, contentModifier)
-        } else when (state.navigation.destination) {
-            PrimaryDestination.MESSAGES -> messagesContent(contentModifier)
-            PrimaryDestination.PLATFORMS -> if (state.navigation.selectedPlatformId == null) {
-                PlatformOverview(
-                    state.platforms,
-                    state.platformSlotFilter,
-                    callbacks.onPlatformSlotFilterChange,
-                    callbacks.onNavigation,
-                    contentModifier,
-                )
-            } else {
-                PlatformEvidenceScreen(
-                    state.selectedPlatformName,
-                    state.selectedPlatformEvidence,
-                    state.platformEvidenceLoading,
-                    state.platformEvidenceErrorText,
-                    state.platformEvidencePermissionUnavailable,
-                    callbacks.onOpenEvidence,
-                    { callbacks.onNavigation(PlatformNavigationEvent.ClosePlatform) },
-                    callbacks.onRequestSmsPermission,
-                    contentModifier,
-                )
-            }
-            PrimaryDestination.PENDING -> PendingLabelScreen(
+        } else when {
+            state.navigation.pendingOpen -> PendingLabelScreen(
                 state.pendingCandidate,
                 state.pendingPermissionUnavailable,
+                state.pendingLabelCount,
                 callbacks,
                 contentModifier,
             )
-            PrimaryDestination.LABELS -> LabelManagementScreen(state.labels, state.actionNotice, callbacks, contentModifier)
+            state.navigation.selectedPlatformId != null -> PlatformEvidenceScreen(
+                state.selectedPlatformName,
+                state.selectedPlatformEvidence,
+                state.platformEvidenceLoading,
+                state.platformEvidenceErrorText,
+                state.platformEvidencePermissionUnavailable,
+                callbacks.onOpenEvidence,
+                { callbacks.onNavigation(PlatformNavigationEvent.ClosePlatform) },
+                callbacks.onRequestSmsPermission,
+                contentModifier,
+            )
+            state.navigation.selectedSlot != null -> SlotDetailScreen(
+                state.navigation.selectedSlot,
+                state.slots.firstOrNull { it.filter == state.navigation.selectedSlot },
+                state.platforms,
+                callbacks,
+                contentModifier,
+            )
+            state.navigation.selectedLabelId != null -> LabelDetailScreen(
+                state.labels.firstOrNull { it.id == state.navigation.selectedLabelId },
+                callbacks,
+                contentModifier,
+            )
+            state.navigation.labelCreateOpen -> LabelCreateScreen(state.labels, callbacks, contentModifier)
+            else -> when (state.navigation.destination) {
+                PrimaryDestination.SCAN -> scanContent(contentModifier)
+                PrimaryDestination.PLATFORMS -> PlatformListScreen(state.platforms, callbacks, contentModifier)
+                PrimaryDestination.SLOTS -> SlotListScreen(state.slots, callbacks, contentModifier)
+                PrimaryDestination.LABELS -> LabelListScreen(state.labels, state.actionNotice, callbacks, contentModifier)
+            }
         }
     }
 }
@@ -283,10 +380,7 @@ fun MessageDetailScreen(
                         if (detail.canRequestPermission) {
                             Button(onClick = onRequestSmsPermission) { Text("重新授权") }
                         }
-                        detail.body?.let {
-                            Text(it)
-                            Text("正文从系统信箱实时读取")
-                        }
+                        detail.body?.let { Text(it) }
                     }
                 }
             }
@@ -295,52 +389,42 @@ fun MessageDetailScreen(
 }
 
 @Composable
-fun PlatformOverview(
+fun PlatformListScreen(
     platforms: List<PlatformSummaryUi>,
-    selectedFilter: PlatformSlotFilter,
-    onFilterChange: (PlatformSlotFilter) -> Unit,
-    onNavigation: (PlatformNavigationEvent) -> Unit,
+    callbacks: PlatformScreensCallbacks,
     modifier: Modifier = Modifier,
 ) {
+    var query by remember { mutableStateOf("") }
+    val filtered = platforms.filter { it.name.contains(query, ignoreCase = true) || it.id.contains(query, ignoreCase = true) }
     LazyColumn(modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item { Text("平台概览", style = MaterialTheme.typography.headlineMedium) }
-        item { Text("平台来自验证码证据；发送者号码本身不等于平台。") }
         item {
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                PlatformSlotFilter.entries.forEach { filter ->
-                    Button(onClick = { onFilterChange(filter) }, enabled = selectedFilter != filter) {
-                        Text(filter.label)
-                    }
+            OutlinedTextField(
+                value = query,
+                onValueChange = { query = it },
+                label = { Text("搜索平台") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        item {
+            Card(Modifier.fillMaxWidth().clickable { callbacks.onNavigation(PlatformNavigationEvent.OpenPendingLabels) }) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("待标注平台", style = MaterialTheme.typography.titleMedium)
+                    Text("进入待标注短信页")
                 }
             }
         }
-        if (platforms.isEmpty()) item {
-            if (selectedFilter == PlatformSlotFilter.ALL) {
-                Text("扫描和确认后，平台会显示在这里。")
-            } else {
-                Text("此卡槽暂无已识别平台")
-                TextButton(onClick = { onFilterChange(PlatformSlotFilter.ALL) }) { Text("查看全部") }
-            }
-        }
-        items(platforms, key = { it.id }) { platform ->
-            Card(Modifier.fillMaxWidth()) {
+        if (filtered.isEmpty()) item { Text("没有匹配的平台。") }
+        items(filtered, key = { it.id }) { platform ->
+            Card(Modifier.fillMaxWidth().clickable { callbacks.onNavigation(PlatformNavigationEvent.OpenPlatform(platform.id)) }) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(platform.name, style = MaterialTheme.typography.titleMedium)
                     Text("验证码 ${platform.verificationCodeCount} 条 · 最近 ${platform.latestAtText}")
-                    Button(onClick = { onNavigation(PlatformNavigationEvent.OpenPlatform(platform.id)) }) { Text("查看注销线索") }
                 }
             }
         }
     }
 }
-
-private val PlatformSlotFilter.label: String
-    get() = when (this) {
-        PlatformSlotFilter.ALL -> "全部"
-        PlatformSlotFilter.SLOT_1 -> "卡槽 1"
-        PlatformSlotFilter.SLOT_2 -> "卡槽 2"
-        PlatformSlotFilter.UNKNOWN -> "未知卡槽"
-    }
 
 @Composable
 fun PlatformEvidenceScreen(
@@ -355,25 +439,24 @@ fun PlatformEvidenceScreen(
     modifier: Modifier = Modifier,
 ) {
     LazyColumn(modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item { TextButton(onClick = onBack) { Text("返回平台") } }
-        item { Text(platformName, style = MaterialTheme.typography.headlineMedium) }
-        item { Text("以下是本机短信证据。请自行前往平台处理账号，本应用不执行注销。") }
+        item { TextButton(onClick = onBack) { Text("返回") } }
+        item { Text(platformName.ifBlank { "平台详情" }, style = MaterialTheme.typography.headlineMedium) }
+        item { Text("平台详情信息") }
         if (loading) item {
-            Text("正在读取证据短信...")
+            Text("正在读取平台短信...")
         } else if (permissionUnavailable) item {
             Text(MESSAGE_DETAIL_PERMISSION_UNAVAILABLE)
             Button(onClick = onRequestSmsPermission) { Text("重新授权") }
         } else if (errorText != null) item {
             Text(errorText)
-        } else if (evidence.isEmpty()) item { Text("当前没有可展示的证据短信。") }
+        } else if (evidence.isEmpty()) item { Text("当前没有可展示的短信。") }
         items(evidence, key = { it.messageId }) { message ->
-            Card(Modifier.fillMaxWidth()) {
+            Card(Modifier.fillMaxWidth().clickable { onOpenEvidence(message.messageId) }) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(message.senderText, style = MaterialTheme.typography.titleMedium)
                     Text(message.receivedAtText)
                     Text(message.simAndSlotText)
                     Text(message.availabilityText)
-                    Button(onClick = { onOpenEvidence(message.messageId) }) { Text("查看短信证据") }
                 }
             }
         }
@@ -384,109 +467,281 @@ fun PlatformEvidenceScreen(
 fun PendingLabelScreen(
     candidate: PendingCandidateUi?,
     permissionUnavailable: Boolean,
+    remainingCount: Int,
     callbacks: PlatformScreensCallbacks,
     modifier: Modifier = Modifier,
 ) {
-    LazyColumn(modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item { Text("待标注", style = MaterialTheme.typography.headlineMedium) }
-        if (permissionUnavailable) {
-            item { Text(MESSAGE_DETAIL_PERMISSION_UNAVAILABLE) }
-            item { Button(onClick = callbacks.onRequestSmsPermission) { Text("重新授权") } }
-            return@LazyColumn
-        }
-        if (candidate == null) {
-            item { Text("目前没有需要确认的候选。") }
-            return@LazyColumn
-        }
-        item {
-            Card(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(candidate.suggestedPlatform ?: "请选择或新建平台", style = MaterialTheme.typography.titleMedium)
-                    Text(candidate.explanation)
-                    candidate.selectedLabel?.let { Text("已选择：${it.displayName}") }
+    val focusManager = LocalFocusManager.current
+    var choosing by remember { mutableStateOf(false) }
+    var selectionConfirmed by remember { mutableStateOf(false) }
+    LaunchedEffect(candidate?.messageId) {
+        choosing = false
+        selectionConfirmed = false
+    }
+    Box(modifier.fillMaxSize()) {
+        LazyColumn(
+            Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            item {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
+                    TextButton(onClick = { callbacks.onNavigation(PlatformNavigationEvent.ClosePendingLabels) }) { Text("返回") }
+                }
+            }
+            item { Text("还剩 $remainingCount 条短信待标注", style = MaterialTheme.typography.titleMedium) }
+            if (permissionUnavailable) {
+                item { Text(MESSAGE_DETAIL_PERMISSION_UNAVAILABLE) }
+                item { Button(onClick = callbacks.onRequestSmsPermission) { Text("重新授权") } }
+                return@LazyColumn
+            }
+            if (candidate == null) {
+                item { Text("目前没有需要确认的候选。") }
+                return@LazyColumn
+            }
+            item {
+                Card(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text(candidate.explanation)
+                    }
+                }
+            }
+            item {
+                Button(onClick = { choosing = true }, enabled = !candidate.submitInProgress) { Text("选择标注") }
+            }
+            if (choosing) {
+                item {
                     OutlinedTextField(
                         value = candidate.labelSearchText,
-                        onValueChange = callbacks.onNewLabelDraftChange,
-                        label = { Text("搜索或新建平台标签") },
+                        onValueChange = {
+                            callbacks.onNewLabelDraftChange(it)
+                            selectionConfirmed = false
+                        },
+                        label = { Text("搜索标注") },
                         singleLine = true,
                         enabled = !candidate.submitInProgress,
+                        modifier = Modifier.fillMaxWidth(),
                     )
+                }
+                items(candidate.existingLabels, key = { it.platformKey }) { label ->
+                    val selected = candidate.selectedLabel == label
                     TextButton(
-                        onClick = { callbacks.onOpenCreateLabel(candidate.messageId) },
-                        enabled = candidate.canCreateLabel,
-                    ) { Text("快速创建标签") }
-                    candidate.submitError?.let { Text(it) }
+                        onClick = {
+                            callbacks.onChooseExistingLabel(candidate.messageId, if (selected) null else label)
+                            selectionConfirmed = false
+                        },
+                        enabled = !candidate.submitInProgress,
+                    ) { Text("${if (selected) "✓ " else ""}${label.displayName}") }
+                }
+            }
+            if (selectionConfirmed && candidate.selectedLabel != null) {
+                item {
                     Button(
                         onClick = { callbacks.onAcceptSuggestedLabel(candidate.messageId) },
                         enabled = candidate.canSubmit,
-                    ) { Text("绑定并训练") }
+                    ) { Text("确认标注") }
                 }
             }
+            candidate.submitError?.let { error -> item { Text(error) } }
         }
-        items(candidate.existingLabels, key = { it.platformKey }) { label ->
-            TextButton(
-                onClick = { callbacks.onChooseExistingLabel(candidate.messageId, label) },
+        val selected = candidate?.selectedLabel
+        if (choosing && selected != null && !selectionConfirmed) {
+            Button(
+                onClick = {
+                    callbacks.onConfirmPendingSelection(selected)
+                    focusManager.clearFocus()
+                    selectionConfirmed = true
+                },
+                modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp),
                 enabled = !candidate.submitInProgress,
-            ) { Text("选择 ${label.displayName}") }
+            ) { Text("确认") }
         }
-    }
-    val dialogCandidate = candidate
-    if (dialogCandidate?.createDialogOpen == true) {
-        AlertDialog(
-            onDismissRequest = callbacks.onDismissCreateLabel,
-            title = { Text("快速创建标签") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(
-                        value = dialogCandidate.labelSearchText,
-                        onValueChange = callbacks.onNewLabelDraftChange,
-                        label = { Text("标签名称") },
-                        singleLine = true,
-                        enabled = !dialogCandidate.submitInProgress,
-                    )
-                    dialogCandidate.createError?.let { Text(it) }
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = { callbacks.onCreateLabel(dialogCandidate.messageId) },
-                    enabled = !dialogCandidate.submitInProgress,
-                ) { Text("确认") }
-            },
-            dismissButton = {
-                TextButton(
-                    onClick = callbacks.onDismissCreateLabel,
-                    enabled = !dialogCandidate.submitInProgress,
-                ) { Text("取消") }
-            },
-        )
     }
 }
 
 @Composable
-fun LabelManagementScreen(labels: List<ManagedLabelUi>, actionNotice: String?, callbacks: PlatformScreensCallbacks, modifier: Modifier = Modifier) {
+fun SlotListScreen(slots: List<SlotCardUi>, callbacks: PlatformScreensCallbacks, modifier: Modifier = Modifier) {
+    LazyColumn(modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        items(slots, key = { it.filter.name }) { slot ->
+            Card(Modifier.fillMaxWidth().clickable { callbacks.onNavigation(PlatformNavigationEvent.OpenSlot(slot.filter)) }) {
+                Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(slot.name, style = MaterialTheme.typography.headlineSmall)
+                    Text("${slot.smsCount} 条短信")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun SlotDetailScreen(
+    slot: PlatformSlotFilter?,
+    slotCard: SlotCardUi?,
+    platforms: List<PlatformSummaryUi>,
+    callbacks: PlatformScreensCallbacks,
+    modifier: Modifier = Modifier,
+) {
+    val visiblePlatforms = when (slot) {
+        PlatformSlotFilter.SLOT_1 -> platforms.filter { it.slot1Count > 0 }
+        PlatformSlotFilter.SLOT_2 -> platforms.filter { it.slot2Count > 0 }
+        PlatformSlotFilter.UNKNOWN -> platforms.filter { it.unknownCount > 0 }
+        else -> platforms
+    }
     LazyColumn(modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item { Text("标签管理", style = MaterialTheme.typography.headlineMedium) }
-        item { Text("合并保留旧名为别名；拆分需要逐条人工重新标注。") }
-        actionNotice?.let { notice -> item { Text(notice) } }
-        if (labels.isEmpty()) item { Text("还没有平台标签。") }
-        items(labels, key = { it.id }) { label ->
-            Card(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(label.displayName, style = MaterialTheme.typography.titleMedium)
-                    Text(label.aliasesText)
-                    OutlinedTextField(
-                        value = label.renameDraft,
-                        onValueChange = { callbacks.onRenameDraftChange(label.id, it) },
-                        label = { Text("标签名称") },
-                        singleLine = true,
-                    )
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(onClick = { callbacks.onRenameLabel(label.id) }) { Text("重命名") }
-                        TextButton(onClick = { callbacks.onMergeLabel(label.id) }) { Text("合并") }
-                        TextButton(onClick = { callbacks.onSplitLabel(label.id) }) { Text("拆分") }
+        item { TextButton(onClick = { callbacks.onNavigation(PlatformNavigationEvent.CloseSlot) }) { Text("返回") } }
+        item { Text(slotCard?.name ?: "卡槽详情", style = MaterialTheme.typography.headlineMedium) }
+        item { Text("短信数量 ${slotCard?.smsCount ?: 0}") }
+        if (visiblePlatforms.isEmpty()) item { Text("此卡槽暂无对应平台。") }
+        items(visiblePlatforms, key = { it.id }) { platform ->
+            Card(Modifier.fillMaxWidth().clickable {
+                slot?.let(callbacks.onPlatformSlotFilterChange)
+                callbacks.onNavigation(PlatformNavigationEvent.OpenPlatform(platform.id))
+            }) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(platform.name, style = MaterialTheme.typography.titleMedium)
+                    Text("验证码 ${platform.verificationCodeCount} 条 · 最近 ${platform.latestAtText}")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun LabelListScreen(labels: List<ManagedLabelUi>, actionNotice: String?, callbacks: PlatformScreensCallbacks, modifier: Modifier = Modifier) {
+    var searchOpen by remember { mutableStateOf(false) }
+    var query by remember { mutableStateOf("") }
+    val focusRequester = remember { FocusRequester() }
+    LaunchedEffect(searchOpen) {
+        if (searchOpen) focusRequester.requestFocus()
+    }
+    val filtered = if (searchOpen) labels.filter {
+        it.displayName.contains(query, ignoreCase = true) || it.id.contains(query, ignoreCase = true)
+    } else labels
+    LazyColumn(modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        item {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = { searchOpen = true }) { Text("搜索") }
+                Button(onClick = { callbacks.onNavigation(PlatformNavigationEvent.OpenLabelCreate) }) { Text("创建") }
+            }
+        }
+        if (searchOpen) {
+            item {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    label = { Text("搜索标签") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().focusRequester(focusRequester),
+                )
+            }
+            if (query.isNotBlank()) {
+                item {
+                    TextButton(onClick = { callbacks.onCreateStandaloneLabel(query, emptyList()) }) {
+                        Text(
+                            "创建标签：$query",
+                            textDecoration = TextDecoration.Underline,
+                        )
                     }
                 }
+            }
+        }
+        actionNotice?.let { item { Text(it) } }
+        if (filtered.isEmpty()) item { Text("还没有平台标签。") }
+        items(filtered, key = { it.id }) { label ->
+            Card(Modifier.fillMaxWidth().clickable { callbacks.onNavigation(PlatformNavigationEvent.OpenLabelDetail(label.id)) }) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(label.displayName, style = MaterialTheme.typography.titleMedium)
+                    Text(label.aliasesText)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun LabelDetailScreen(label: ManagedLabelUi?, callbacks: PlatformScreensCallbacks, modifier: Modifier = Modifier) {
+    LazyColumn(modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        item { TextButton(onClick = { callbacks.onNavigation(PlatformNavigationEvent.CloseLabelDetail) }) { Text("返回") } }
+        item { Text(label?.displayName ?: "标签详情", style = MaterialTheme.typography.headlineMedium) }
+        item { Text("平台标签：${label?.displayName.orEmpty()}") }
+        item { Text("合并标签信息：${label?.aliasesText.orEmpty()}") }
+    }
+}
+
+@Composable
+fun LabelCreateScreen(labels: List<ManagedLabelUi>, callbacks: PlatformScreensCallbacks, modifier: Modifier = Modifier) {
+    var labelName by remember { mutableStateOf("") }
+    var mergeOpen by remember { mutableStateOf(false) }
+    var mergeQuery by remember { mutableStateOf("") }
+    val selected = remember { mutableStateListOf<LabelChoiceUi>() }
+    val focusRequester = remember { FocusRequester() }
+    LaunchedEffect(mergeOpen) {
+        if (mergeOpen) focusRequester.requestFocus()
+    }
+    val choices = labels.map {
+        LabelChoiceUi(
+            labelId = it.id.hashCode().toLong(),
+            platformKey = it.id,
+            displayName = it.displayName,
+        )
+    }
+    val selectedKeys = selected.map { it.platformKey }.toSet()
+    val matched = if (mergeQuery.isBlank()) emptyList() else choices.filter {
+        it.displayName.contains(mergeQuery, ignoreCase = true) || it.platformKey.contains(mergeQuery, ignoreCase = true)
+    }
+    val ordered = selected + matched.filterNot { it.platformKey in selectedKeys }
+    LazyColumn(modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        item { TextButton(onClick = { callbacks.onNavigation(PlatformNavigationEvent.CloseLabelCreate) }) { Text("返回") } }
+        item { Text("创建标签", style = MaterialTheme.typography.headlineMedium) }
+        item {
+            OutlinedTextField(
+                value = labelName,
+                onValueChange = { labelName = it },
+                label = { Text("标签名") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        item {
+            Button(onClick = { callbacks.onCreateStandaloneLabel(labelName, selected.toList()) }) { Text("创建") }
+        }
+        item {
+            TextButton(onClick = { mergeOpen = true }) { Text("合并已有标签") }
+        }
+        if (selected.isNotEmpty() && !mergeOpen) {
+            item {
+                OutlinedTextField(
+                    value = selected.joinToString(",") { it.displayName },
+                    onValueChange = {},
+                    readOnly = true,
+                    label = { Text("已选择合并标签") },
+                    modifier = Modifier.fillMaxWidth().clickable { mergeOpen = true },
+                )
+            }
+        }
+        if (mergeOpen) {
+            item {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = mergeQuery,
+                        onValueChange = { mergeQuery = it },
+                        label = { Text("搜索已有标签") },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f).focusRequester(focusRequester),
+                    )
+                    Button(
+                        onClick = { mergeOpen = false },
+                        enabled = selected.isNotEmpty(),
+                    ) { Text("确认") }
+                }
+            }
+            if (ordered.isEmpty()) item { Text("输入搜索词后显示匹配标签。") }
+            items(ordered, key = { it.platformKey }) { label ->
+                val isSelected = selected.any { it.platformKey == label.platformKey }
+                TextButton(onClick = {
+                    if (isSelected) selected.removeAll { it.platformKey == label.platformKey } else selected.add(label)
+                }) { Text("${if (isSelected) "✓ " else ""}${label.displayName}") }
             }
         }
     }
