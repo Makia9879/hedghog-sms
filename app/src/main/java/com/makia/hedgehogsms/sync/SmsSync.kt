@@ -95,7 +95,9 @@ class IncrementalSmsWorker(context: Context, params: WorkerParameters) : Corouti
                 25,
                 null,
             )
-            val eligible = page.filter { it.dateMillis >= cutoff || it.id > state.baselineHighWaterId }
+            val eligible = page.filter {
+                it.dateMillis >= cutoff || (state.baselineHighWaterId > 0 && it.id > state.baselineHighWaterId)
+            }
             if (eligible.isEmpty()) {
                 if (state.cursorDate == null) {
                     // A broadcast can precede the Provider row. Retry at

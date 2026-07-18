@@ -14,6 +14,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import com.makia.hedgehogsms.classification.PendingLabelTrainingQueueRepository
 import com.makia.hedgehogsms.classification.TrainingRepository
 import com.makia.hedgehogsms.classification.TextFeatureExtractor
 import com.makia.hedgehogsms.security.AndroidFeatureHmacKey
@@ -30,7 +31,10 @@ class HedgehogApplication : Application() {
         SmsSyncScheduler.scheduleReconcile(this)
         registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
             override fun onActivityStarted(activity: Activity) {
-                if (startedActivities++ == 0) applicationScope.launch { SmsSyncScheduler.request(this@HedgehogApplication) }
+                if (startedActivities++ == 0) applicationScope.launch {
+                    SmsSyncScheduler.request(this@HedgehogApplication)
+                    container.pendingLabelTrainingQueueRepository.drain()
+                }
             }
             override fun onActivityStopped(activity: Activity) { startedActivities = (startedActivities - 1).coerceAtLeast(0) }
             override fun onActivityCreated(activity: Activity, state: Bundle?) = Unit
@@ -48,9 +52,16 @@ class HedgehogApplication : Application() {
             subscriptionSource = AndroidSubscriptionSource(this),
             historyDeviceState = AndroidHistoryDeviceStateSource(this),
             database = Room.databaseBuilder(this, AppDatabase::class.java, "hedgehog.db")
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
                 .build(),
         )
+    }
+}
+
+private val MIGRATION_6_7 = object : Migration(6, 7) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("""CREATE TABLE IF NOT EXISTS `pending_label_training_queue` (`messageId` INTEGER NOT NULL, `labelId` INTEGER NOT NULL, `platformKey` TEXT NOT NULL, `displayName` TEXT NOT NULL, `status` TEXT NOT NULL, `attempts` INTEGER NOT NULL, `createdAt` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, PRIMARY KEY(`messageId`))""")
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_pending_label_training_queue_status_createdAt` ON `pending_label_training_queue` (`status`, `createdAt`)")
     }
 }
 
@@ -98,4 +109,7 @@ data class AppContainer(
     val featureHmacKey by lazy { AndroidFeatureHmacKey(context) }
     val featureExtractor by lazy { TextFeatureExtractor(featureHmacKey) }
     val trainingRepository by lazy { TrainingRepository(database) }
+    val pendingLabelTrainingQueueRepository by lazy {
+        PendingLabelTrainingQueueRepository(database, smsSource, featureExtractor, trainingRepository)
+    }
 }

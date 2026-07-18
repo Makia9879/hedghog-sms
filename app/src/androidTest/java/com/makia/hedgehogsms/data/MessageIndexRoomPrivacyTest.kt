@@ -11,6 +11,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import com.makia.hedgehogsms.sync.SyncState
 import com.makia.hedgehogsms.classification.MessageClassification
+import com.makia.hedgehogsms.classification.PendingLabelTrainingJob
 import com.makia.hedgehogsms.classification.PlatformSlotFilter
 
 @RunWith(AndroidJUnit4::class)
@@ -35,6 +36,37 @@ class MessageIndexRoomPrivacyTest {
         listOf("body", "address", "sender", "preview", "code", "otp").forEach { forbidden ->
             assertFalse(columns.any { forbidden in it })
         }
+    }
+
+    @Test fun pendingLabelTrainingQueueStoresOnlyMetadata() = kotlinx.coroutines.runBlocking {
+        database.pendingLabelTrainingQueueDao().upsert(
+            PendingLabelTrainingJob(9, 77, "bank", "虚构银行", createdAt = 1, updatedAt = 1),
+        )
+
+        val columns = database.openHelper.readableDatabase
+            .query("PRAGMA table_info(pending_label_training_queue)")
+            .use { cursor -> buildList { while (cursor.moveToNext()) add(cursor.getString(cursor.getColumnIndexOrThrow("name")).lowercase()) } }
+
+        assertEquals(
+            listOf("messageid", "labelid", "platformkey", "displayname", "status", "attempts", "createdat", "updatedat"),
+            columns,
+        )
+        listOf("body", "address", "sender", "phone", "number", "preview", "code", "otp").forEach { forbidden ->
+            assertFalse(columns.any { forbidden in it })
+        }
+    }
+
+    @Test fun pendingLabelCandidateExcludesQueuedMessages() = kotlinx.coroutines.runBlocking {
+        val dao = database.classificationDao()
+        dao.insertAutomated(listOf(
+            MessageClassification(1, true, null, null, "PENDING_LABEL", null, false, 1),
+            MessageClassification(2, true, null, null, "PENDING_LABEL", null, false, 1),
+        ))
+        database.pendingLabelTrainingQueueDao().upsert(
+            PendingLabelTrainingJob(2, 77, "bank", "虚构银行", createdAt = 2, updatedAt = 2),
+        )
+
+        assertEquals(1L, dao.nextPendingMessageId())
     }
 
     @Test fun staleGenerationCannotSetFenceOrFinishAfterPause() = kotlinx.coroutines.runBlocking {
@@ -66,7 +98,7 @@ class MessageIndexRoomPrivacyTest {
         ))
 
         dao.bumpGeneration(ScanStatus.PAUSED, 2)
-        dao.bumpGeneration(ScanStatus.RUNNING, 3)
+        dao.startOrResumeIfNotCompleted(3)
 
         val resumed = dao.get()!!
         assertEquals(4, resumed.generation)
@@ -76,6 +108,65 @@ class MessageIndexRoomPrivacyTest {
         assertEquals(25, resumed.processed)
         assertEquals(500, resumed.upperDate)
         assertEquals(50, resumed.upperId)
+    }
+
+    @Test fun completedHistoryStartOrResumeDoesNotAdvanceGenerationOrRewriteRun() = kotlinx.coroutines.runBlocking {
+        val dao = database.scanRunDao()
+        dao.insertIfMissing(ScanRun(
+            generation = 5,
+            status = ScanStatus.COMPLETED,
+            upperDate = 500,
+            upperId = 50,
+            cursorDate = 100,
+            cursorId = 10,
+            processed = 25,
+            estimated = 25,
+            startedAt = 1,
+            updatedAt = 2,
+            completedAt = 3,
+        ))
+
+        assertEquals(0, dao.startOrResumeIfNotCompleted(4))
+
+        val completed = dao.get()!!
+        assertEquals(5, completed.generation)
+        assertEquals(ScanStatus.COMPLETED, completed.status)
+        assertEquals(100, completed.cursorDate)
+        assertEquals(10, completed.cursorId)
+        assertEquals(25, completed.processed)
+        assertEquals(25, completed.estimated)
+        assertEquals(2, completed.updatedAt)
+        assertEquals(3, completed.completedAt)
+    }
+
+    @Test fun startOrResumeStartsMissingIdleAndRecoverableRuns() = kotlinx.coroutines.runBlocking {
+        val dao = database.scanRunDao()
+
+        dao.insertIfMissing(ScanRun(updatedAt = 1))
+        assertEquals(1, dao.startOrResumeIfNotCompleted(2))
+        var started = dao.get()!!
+        assertEquals(1, started.generation)
+        assertEquals(ScanStatus.RUNNING, started.status)
+
+        listOf(
+            ScanStatus.IDLE,
+            ScanStatus.PAUSED,
+            ScanStatus.FAILED,
+            ScanStatus.WAITING_BATTERY,
+            ScanStatus.WAITING_THERMAL,
+            ScanStatus.WAITING_PERMISSION,
+        ).forEachIndexed { index, status ->
+            val generation = 10L + index
+            dao.upsert(ScanRun(generation = generation, status = status, lastError = "PreviousError", updatedAt = 10))
+
+            assertEquals(1, dao.startOrResumeIfNotCompleted(20))
+
+            started = dao.get()!!
+            assertEquals(generation + 1, started.generation)
+            assertEquals(ScanStatus.RUNNING, started.status)
+            assertEquals(null, started.lastError)
+            assertEquals(20, started.updatedAt)
+        }
     }
 
     @Test fun incrementalCheckpointRejectsStaleGeneration() = kotlinx.coroutines.runBlocking {
@@ -110,6 +201,23 @@ class MessageIndexRoomPrivacyTest {
         assertEquals(40, requested.baselineHighWaterId)
         assertEquals(null, requested.cursorDate)
         assertEquals(null, requested.cursorId)
+    }
+
+    @Test fun historyCompletionCanAdvanceIncrementalWatermarkWithoutRequestingFullRescan() = kotlinx.coroutines.runBlocking {
+        database.messageIndexDao().upsertAll(listOf(
+            MessageIndex(41, 100, 1, null, null, SlotMappingStatus.UNKNOWN_NO_SUB_ID, 1, 1),
+            MessageIndex(55, 110, 1, null, null, SlotMappingStatus.UNKNOWN_NO_SUB_ID, 1, 1),
+        ))
+        val dao = database.syncStateDao()
+        dao.insertIfMissing(SyncState(updatedAt = 1))
+
+        assertEquals(1, dao.advanceHighWaterId(database.messageIndexDao().maxSourceMessageId(), 2))
+
+        val state = dao.get()!!
+        assertEquals(55, state.highWaterId)
+        assertEquals(55, state.baselineHighWaterId)
+        assertEquals(0, state.requestedGeneration)
+        assertEquals(0, state.completedGeneration)
     }
 
     @Test fun reconcileDeletionRemovesOnlyMissingIndex() = kotlinx.coroutines.runBlocking {
@@ -181,5 +289,28 @@ class MessageIndexRoomPrivacyTest {
 
         assertEquals(1, slot1Summary.otpCount)
         assertEquals(listOf(10L), slot1EvidenceIds)
+    }
+
+    @Test fun slotDetailPlatformListUsesSummaryDaoAndEvidenceSharesSlotScope() = kotlinx.coroutines.runBlocking {
+        database.messageIndexDao().upsertAll(listOf(
+            MessageIndex(20, 200, 1, null, 0, SlotMappingStatus.RESOLVED, 1, 1),
+            MessageIndex(21, 210, 1, null, 0, SlotMappingStatus.RESOLVED, 1, 1),
+            MessageIndex(22, 220, 1, null, 1, SlotMappingStatus.RESOLVED, 1, 1),
+            MessageIndex(23, 230, 1, null, 0, SlotMappingStatus.RESOLVED, 1, 1),
+        ))
+        database.classificationDao().insertAutomated(listOf(
+            MessageClassification(20, true, "bank", "虚构银行", "LABELED", "RULE", false, 1),
+            MessageClassification(21, true, "bank", "虚构银行", "LABELED", "RULE", false, 1),
+            MessageClassification(22, true, "bank", "虚构银行", "LABELED", "RULE", false, 1),
+            MessageClassification(23, true, "shop", "虚构商店", "LABELED", "RULE", false, 1),
+        ))
+
+        val slot1Platforms = database.classificationDao().platformSummaries(PlatformSlotFilter.SLOT_1.name)
+        val bankEvidenceIds = database.classificationDao()
+            .messageIdsForPlatform("bank", PlatformSlotFilter.SLOT_1.name, 25, 0)
+
+        assertEquals(listOf("shop", "bank"), slot1Platforms.map { it.platformKey })
+        assertEquals(2, slot1Platforms.first { it.platformKey == "bank" }.otpCount)
+        assertEquals(listOf(21L, 20L), bankEvidenceIds)
     }
 }

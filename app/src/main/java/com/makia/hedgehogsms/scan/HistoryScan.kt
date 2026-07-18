@@ -29,11 +29,11 @@ class HistoryScanCoordinator(private val context: Context) {
     suspend fun startOrResume() {
         val dao = app.container.database.scanRunDao()
         val now = System.currentTimeMillis()
-        app.container.database.withTransaction {
+        val started = app.container.database.withTransaction {
             dao.insertIfMissing(ScanRun(updatedAt = now))
-            dao.bumpGeneration(ScanStatus.RUNNING, now)
+            dao.startOrResumeIfNotCompleted(now)
         }
-        enqueue(ExistingWorkPolicy.REPLACE, 0)
+        if (started > 0) enqueue(ExistingWorkPolicy.REPLACE, 0)
     }
 
     suspend fun pause() {
@@ -105,7 +105,11 @@ class HistoryScanWorker(context: Context, params: WorkerParameters) : CoroutineW
                 val first = container.smsSource.page(null, 1, null).firstOrNull()
                 if (first == null) {
                     val now = System.currentTimeMillis()
-                    runDao.finishEmptyIfRunning(expectedGeneration, now)
+                    container.database.withTransaction {
+                        runDao.finishEmptyIfRunning(expectedGeneration, now)
+                        container.database.syncStateDao().insertIfMissing(com.makia.hedgehogsms.sync.SyncState(updatedAt = now))
+                        container.database.syncStateDao().advanceHighWaterId(0, now)
+                    }
                     return Result.success()
                 }
                 val fence = SmsFence(first.dateMillis, first.id)
@@ -143,6 +147,13 @@ class HistoryScanWorker(context: Context, params: WorkerParameters) : CoroutineW
                     container.database.messageIndexDao().upsertAll(indexes)
                     container.database.classificationDao().upsertAutomated(classifications)
                     val last = page.lastOrNull()
+                    if (pageCompletedScan) {
+                        container.database.syncStateDao().insertIfMissing(com.makia.hedgehogsms.sync.SyncState(updatedAt = now))
+                        container.database.syncStateDao().advanceHighWaterId(
+                            container.database.messageIndexDao().maxSourceMessageId(),
+                            now,
+                        )
+                    }
                     runDao.upsert(fenced.copy(
                         cursorDate = last?.dateMillis ?: fenced.cursorDate,
                         cursorId = last?.id ?: fenced.cursorId,

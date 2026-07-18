@@ -15,6 +15,7 @@ import com.makia.hedgehogsms.classification.MessageClassification
 import com.makia.hedgehogsms.classification.PlatformSummary
 import com.makia.hedgehogsms.classification.PlatformIdentity
 import com.makia.hedgehogsms.classification.PlatformSlotFilter
+import com.makia.hedgehogsms.classification.PendingLabelTrainingJob
 import com.makia.hedgehogsms.classification.TrainingSample
 import com.makia.hedgehogsms.classification.TrainingFeature
 import com.makia.hedgehogsms.classification.ModelClassStat
@@ -32,6 +33,9 @@ interface MessageIndexDao {
 
     @Query("SELECT * FROM message_index ORDER BY messageDate DESC, sourceMessageId DESC")
     suspend fun all(): List<MessageIndex>
+
+    @Query("SELECT COALESCE(MAX(sourceMessageId), 0) FROM message_index")
+    suspend fun maxSourceMessageId(): Long
 
     @Query("""
         SELECT COUNT(*) AS total,
@@ -76,6 +80,11 @@ interface SyncStateDao {
         WHERE id='incremental' AND requestedGeneration=:generation""")
     suspend fun checkpoint(generation: Long, completedGeneration: Long, highWaterId: Long,
         cursorDate: Long?, cursorId: Long?, baselineHighWaterId: Long, now: Long): Int
+
+    @Query("""UPDATE sync_state SET highWaterId=MAX(highWaterId, :highWaterId),
+        baselineHighWaterId=MAX(baselineHighWaterId, :highWaterId), updatedAt=:now
+        WHERE id='incremental'""")
+    suspend fun advanceHighWaterId(highWaterId: Long, now: Long): Int
 }
 
 @Dao
@@ -171,7 +180,15 @@ interface ClassificationDao {
     """)
     suspend fun messageIdsForPlatform(platformKey: String, slotFilter: String, limit: Int, offset: Int): List<Long>
 
-    @Query("SELECT sourceMessageId FROM message_classification WHERE status='PENDING_LABEL' ORDER BY sourceMessageId DESC LIMIT 1")
+    @Query("""
+        SELECT sourceMessageId FROM message_classification
+        WHERE status='PENDING_LABEL'
+          AND sourceMessageId NOT IN (
+            SELECT messageId FROM pending_label_training_queue
+            WHERE status IN ('PENDING', 'PROCESSING', 'FAILED')
+          )
+        ORDER BY sourceMessageId DESC LIMIT 1
+    """)
     suspend fun nextPendingMessageId(): Long?
 
     @Query("""UPDATE message_classification SET platformKey=:platformKey, platformDisplayName=:displayName,
@@ -181,6 +198,38 @@ interface ClassificationDao {
 
     @Query("SELECT DISTINCT platformKey, platformDisplayName AS displayName FROM message_classification WHERE platformKey IS NOT NULL AND platformDisplayName IS NOT NULL")
     suspend fun knownPlatforms(): List<PlatformIdentity>
+}
+
+@Dao
+interface PendingLabelTrainingQueueDao {
+    @Upsert suspend fun upsert(job: PendingLabelTrainingJob)
+
+    @Query("""
+        SELECT * FROM pending_label_training_queue
+        WHERE status IN ('PENDING', 'FAILED')
+        ORDER BY createdAt ASC, messageId ASC
+        LIMIT 1
+    """)
+    suspend fun nextRunnable(): PendingLabelTrainingJob?
+
+    @Query("""
+        UPDATE pending_label_training_queue
+        SET status='PROCESSING', attempts=attempts+1, updatedAt=:now
+        WHERE messageId=:messageId AND status IN ('PENDING', 'FAILED')
+    """)
+    suspend fun markProcessing(messageId: Long, now: Long): Int
+
+    @Query("UPDATE pending_label_training_queue SET status='FAILED', updatedAt=:now WHERE messageId=:messageId")
+    suspend fun markFailed(messageId: Long, now: Long): Int
+
+    @Query("UPDATE pending_label_training_queue SET status='PENDING', updatedAt=:now WHERE status='PROCESSING' AND updatedAt<:before")
+    suspend fun resetStaleProcessing(before: Long, now: Long): Int
+
+    @Query("DELETE FROM pending_label_training_queue WHERE messageId=:messageId")
+    suspend fun delete(messageId: Long): Int
+
+    @Query("SELECT * FROM pending_label_training_queue WHERE messageId=:messageId")
+    suspend fun get(messageId: Long): PendingLabelTrainingJob?
 }
 
 @Dao
@@ -230,6 +279,8 @@ interface ScanRunDao {
     @Query("SELECT * FROM scan_run WHERE id = 'history'") fun observe(): Flow<ScanRun?>
     @Upsert suspend fun upsert(run: ScanRun)
     @Insert(onConflict = OnConflictStrategy.IGNORE) suspend fun insertIfMissing(run: ScanRun)
+    @Query("UPDATE scan_run SET generation=generation+1, status='RUNNING', lastError=NULL, startedAt=COALESCE(startedAt,:now), updatedAt=:now WHERE id='history' AND status != 'COMPLETED'")
+    suspend fun startOrResumeIfNotCompleted(now: Long): Int
     @Query("UPDATE scan_run SET generation=generation+1, status=:status, lastError=NULL, startedAt=COALESCE(startedAt,:now), updatedAt=:now WHERE id='history'")
     suspend fun bumpGeneration(status: ScanStatus, now: Long): Int
     @Query("UPDATE scan_run SET upperDate=:date, upperId=:messageId, estimated=:estimated, updatedAt=:now WHERE id='history' AND generation=:generation AND status='RUNNING'")
@@ -252,12 +303,14 @@ class DatabaseConverters {
 }
 
 @Database(entities = [MessageIndex::class, ScanRun::class, SyncState::class, MessageClassification::class,
-    TrainingSample::class, TrainingFeature::class, ModelClassStat::class, ModelFeatureStat::class], version = 6, exportSchema = false)
+    TrainingSample::class, TrainingFeature::class, ModelClassStat::class, ModelFeatureStat::class,
+    PendingLabelTrainingJob::class], version = 7, exportSchema = false)
 @TypeConverters(DatabaseConverters::class)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun messageIndexDao(): MessageIndexDao
     abstract fun scanRunDao(): ScanRunDao
     abstract fun syncStateDao(): SyncStateDao
     abstract fun classificationDao(): ClassificationDao
+    abstract fun pendingLabelTrainingQueueDao(): PendingLabelTrainingQueueDao
     abstract fun trainingDao(): TrainingDao
 }

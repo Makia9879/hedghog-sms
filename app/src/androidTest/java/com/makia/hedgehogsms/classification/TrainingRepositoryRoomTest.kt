@@ -4,6 +4,8 @@ import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.makia.hedgehogsms.data.AppDatabase
+import com.makia.hedgehogsms.data.FakeSmsSource
+import com.makia.hedgehogsms.data.SmsRecord
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -123,5 +125,72 @@ class TrainingRepositoryRoomTest {
         assertNull(database.trainingDao().sample(11))
         assertNull(database.trainingDao().classStat(99, "test-key", 1))
         assertNull(database.trainingDao().featureStat(99, 13, "test-key", 1))
+    }
+
+    @Test fun pendingLabelQueueProcessingTrainsAndDeletesSuccessfulJob() = runBlocking {
+        val queue = PendingLabelTrainingQueueRepository(
+            database,
+            FakeSmsSource(listOf(SmsRecord(12, 100, 1, "sender", "【虚构银行】验证码 123456", 1))),
+            TextFeatureExtractor(ByteArray(32) { 1 }, "test-key"),
+            repository,
+        )
+        database.classificationDao().insertAutomated(listOf(
+            MessageClassification(12, true, null, null, "PENDING_LABEL", null, false, 1),
+        ))
+        queue.enqueue(12, 77, "bank", "虚构银行", 2)
+
+        assertEquals(true, queue.processNext(3))
+
+        assertNull(database.pendingLabelTrainingQueueDao().get(12))
+        assertEquals("LABELED", database.classificationDao().get(12)?.status)
+        assertEquals(true, database.classificationDao().get(12)?.isHumanConfirmed)
+        assertEquals(1, database.trainingDao().classStat(77, "test-key", 1)?.documentCount)
+    }
+
+    @Test fun pendingLabelQueueFailureRetainsJobStatusAndAttempts() = runBlocking {
+        val queue = PendingLabelTrainingQueueRepository(
+            database,
+            FakeSmsSource(emptyList()),
+            TextFeatureExtractor(ByteArray(32) { 1 }, "test-key"),
+            repository,
+        )
+        database.classificationDao().insertAutomated(listOf(
+            MessageClassification(13, true, null, null, "PENDING_LABEL", null, false, 1),
+        ))
+        queue.enqueue(13, 88, "missing", "缺失平台", 2)
+
+        assertEquals(true, queue.processNext(3))
+
+        val failed = database.pendingLabelTrainingQueueDao().get(13)!!
+        assertEquals(PendingLabelTrainingQueueStatus.FAILED, failed.status)
+        assertEquals(1, failed.attempts)
+        assertNull(database.trainingDao().sample(13))
+        assertEquals("PENDING_LABEL", database.classificationDao().get(13)?.status)
+    }
+
+    @Test fun failedPendingLabelQueueJobCanRetryFromDisk() = runBlocking {
+        val failingQueue = PendingLabelTrainingQueueRepository(
+            database,
+            FakeSmsSource(emptyList()),
+            TextFeatureExtractor(ByteArray(32) { 1 }, "test-key"),
+            repository,
+        )
+        database.classificationDao().insertAutomated(listOf(
+            MessageClassification(14, true, null, null, "PENDING_LABEL", null, false, 1),
+        ))
+        failingQueue.enqueue(14, 99, "bank", "虚构银行", 2)
+        failingQueue.processNext(3)
+
+        val retryingQueue = PendingLabelTrainingQueueRepository(
+            database,
+            FakeSmsSource(listOf(SmsRecord(14, 100, 1, "sender", "【虚构银行】验证码 123456", 1))),
+            TextFeatureExtractor(ByteArray(32) { 1 }, "test-key"),
+            repository,
+        )
+
+        assertEquals(true, retryingQueue.processNext(4))
+        assertNull(database.pendingLabelTrainingQueueDao().get(14))
+        assertEquals("LABELED", database.classificationDao().get(14)?.status)
+        assertEquals(1, database.trainingDao().classStat(99, "test-key", 1)?.documentCount)
     }
 }
