@@ -76,6 +76,8 @@ import com.makia.hedgehogsms.ui.security.PrivacyEvent
 import com.makia.hedgehogsms.ui.security.PrivacyUiState
 import com.makia.hedgehogsms.ui.security.reduce
 import kotlinx.coroutines.launch
+import java.text.DateFormat
+import java.util.Date
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -215,6 +217,9 @@ private fun Inbox(
     val scanCoordinator = remember { HistoryScanCoordinator(context) }
     val inboxViewModel: InboxViewModel = viewModel(factory = InboxViewModel.factory(container, scanCoordinator))
     val uiState by inboxViewModel.uiState.collectAsStateWithLifecycle()
+    LaunchedEffect(inboxViewModel) {
+        inboxViewModel.drainPendingLabelTrainingQueue()
+    }
     val scanRun = uiState.scanRun
     val indexedTotal = uiState.summary.total
     val sensitiveContentVisible = platformNavigation.isSensitiveScreen()
@@ -258,6 +263,7 @@ private fun Inbox(
         }
     }
     val resolver = remember { SlotResolver() }
+    val dateTimeFormat = remember { DateFormat.getDateTimeInstance() }
     val resolved = messages.associateWith { resolver.resolve(it.subscriptionId, slots, slotCount) }
     val filtered = messages.filter { sms ->
         val slot = resolved.getValue(sms).slotIndex
@@ -268,6 +274,106 @@ private fun Inbox(
             InboxFilter.UNKNOWN -> slot == null
         }
     }
+    val messageDetailReceivedAtText = remember(selected?.dateMillis) {
+        selected?.let { dateTimeFormat.format(Date(it.dateMillis)) }
+    }
+    val showingPlatformList = platformNavigation.destination == PrimaryDestination.PLATFORMS &&
+        platformNavigation.selectedPlatformId == null &&
+        !platformNavigation.pendingOpen &&
+        platformNavigation.detail == null
+    val showingPendingLabels = platformNavigation.pendingOpen
+    val showingSlotDetail = platformNavigation.selectedSlot != null && platformNavigation.selectedPlatformId == null
+    val showingLabelScreens = platformNavigation.destination == PrimaryDestination.LABELS ||
+        platformNavigation.selectedLabelId != null ||
+        platformNavigation.labelCreateOpen
+    val showingPlatformEvidence = platformNavigation.selectedPlatformId != null
+    val platformSummaries = remember(uiState.platforms, showingPlatformList) {
+        if (!showingPlatformList) {
+            emptyList()
+        } else {
+            uiState.platforms.map { platform ->
+                PlatformSummaryUi(
+                    id = platform.platformKey,
+                    name = platform.displayName,
+                    verificationCodeCount = platform.otpCount,
+                    latestAtText = dateTimeFormat.format(Date(platform.latestMessageDate)),
+                    slot1Count = platform.slot1Count,
+                    slot2Count = platform.slot2Count,
+                    unknownCount = platform.unknownCount,
+                )
+            }
+        }
+    }
+    val selectedPlatformEvidence = remember(uiState.platformEvidence, showingPlatformEvidence) {
+        if (!showingPlatformEvidence) {
+            emptyList()
+        } else {
+            uiState.platformEvidence.map { sms ->
+                EvidenceMessageUi(
+                    messageId = sms.id,
+                    senderText = sms.sender.orEmpty(),
+                    receivedAtText = dateTimeFormat.format(Date(sms.dateMillis)),
+                    simAndSlotText = "卡槽信息以扫描索引为准",
+                )
+            }
+        }
+    }
+    val labelChoices = remember(uiState.labelPlatforms, showingPendingLabels) {
+        if (!showingPendingLabels) {
+            emptyList()
+        } else {
+            uiState.labelPlatforms.map {
+                LabelChoiceUi(
+                    labelId = PlatformRuleClassifier.stablePlatformLabelId(it.displayName),
+                    platformKey = it.platformKey,
+                    displayName = it.displayName,
+                )
+            }
+        }
+    }
+    val normalizedLabelSearch = remember(newPlatformName) {
+        runCatching {
+            com.makia.hedgehogsms.classification.PlatformLabelNormalizer.comparisonKey(newPlatformName)
+        }.getOrNull()
+    }
+    val filteredLabelChoices = remember(labelChoices, normalizedLabelSearch) {
+        labelChoices.filter { label ->
+            normalizedLabelSearch == null ||
+                com.makia.hedgehogsms.classification.PlatformLabelNormalizer.comparisonKey(label.displayName)
+                    .contains(normalizedLabelSearch)
+        }
+    }
+    val selectedSlotPlatformSummaries = remember(uiState.slotDetailPlatforms, showingSlotDetail) {
+        if (!showingSlotDetail) {
+            emptyList()
+        } else {
+            uiState.slotDetailPlatforms.map { platform ->
+                PlatformSummaryUi(
+                    id = platform.platformKey,
+                    name = platform.displayName,
+                    verificationCodeCount = platform.otpCount,
+                    latestAtText = dateTimeFormat.format(Date(platform.latestMessageDate)),
+                    slot1Count = platform.slot1Count,
+                    slot2Count = platform.slot2Count,
+                    unknownCount = platform.unknownCount,
+                )
+            }
+        }
+    }
+    val managedLabels = remember(uiState.labelPlatforms, labelDrafts, showingLabelScreens) {
+        if (!showingLabelScreens) {
+            emptyList()
+        } else {
+            uiState.labelPlatforms.map { platform ->
+                ManagedLabelUi(
+                    id = platform.platformKey,
+                    displayName = platform.displayName,
+                    renameDraft = labelDrafts[platform.platformKey] ?: platform.displayName,
+                    aliasesText = "别名治理需要先选择目标并确认",
+                )
+            }
+        }
+    }
     val platformScreenState = PlatformScreensUiState(
         navigation = platformNavigation,
         platformSlotFilter = uiState.platformSlotFilter,
@@ -275,54 +381,21 @@ private fun Inbox(
             navigation = platformNavigation.detail,
             senderText = selected?.sender,
             body = selected?.body,
-            receivedAtText = selected?.let { java.text.DateFormat.getDateTimeInstance().format(java.util.Date(it.dateMillis)) },
+            receivedAtText = messageDetailReceivedAtText,
             statusText = detailStatusText,
         ),
-        platforms = uiState.platforms.map { platform ->
-            PlatformSummaryUi(
-                id = platform.platformKey,
-                name = platform.displayName,
-                verificationCodeCount = platform.otpCount,
-                latestAtText = java.text.DateFormat.getDateTimeInstance().format(java.util.Date(platform.latestMessageDate)),
-                slot1Count = platform.slot1Count,
-                slot2Count = platform.slot2Count,
-                unknownCount = platform.unknownCount,
-            )
-        },
+        platforms = platformSummaries,
         selectedPlatformName = uiState.selectedPlatform?.displayName.orEmpty(),
-        selectedPlatformEvidence = uiState.platformEvidence.map { sms ->
-            EvidenceMessageUi(
-                messageId = sms.id,
-                senderText = sms.sender.orEmpty(),
-                receivedAtText = java.text.DateFormat.getDateTimeInstance().format(java.util.Date(sms.dateMillis)),
-                simAndSlotText = "卡槽信息以扫描索引为准",
-            )
-        },
+        selectedPlatformEvidence = selectedPlatformEvidence,
         platformEvidenceLoading = uiState.platformEvidenceLoading,
         platformEvidenceErrorText = uiState.platformEvidenceErrorText,
         platformEvidencePermissionUnavailable = uiState.platformEvidencePermissionUnavailable,
         pendingCandidate = uiState.pendingMessage?.let { sms ->
-            val normalizedSearch = runCatching {
-                com.makia.hedgehogsms.classification.PlatformLabelNormalizer.comparisonKey(newPlatformName)
-            }.getOrNull()
-            val labels = uiState.labelPlatforms
-                .map {
-                    LabelChoiceUi(
-                        labelId = PlatformRuleClassifier.stablePlatformLabelId(it.displayName),
-                        platformKey = it.platformKey,
-                        displayName = it.displayName,
-                    )
-                }
-                .filter { label ->
-                    normalizedSearch == null ||
-                        com.makia.hedgehogsms.classification.PlatformLabelNormalizer.comparisonKey(label.displayName)
-                            .contains(normalizedSearch)
-                }
             PendingCandidateUi(
                 messageId = sms.id,
                 suggestedPlatform = null,
                 explanation = sms.body,
-                existingLabels = labels,
+                existingLabels = filteredLabelChoices,
                 labelSearchText = newPlatformName,
                 selectedLabel = selectedPendingLabel,
                 createDialogOpen = createLabelDialogOpen,
@@ -338,39 +411,25 @@ private fun Inbox(
             SlotCardUi(com.makia.hedgehogsms.classification.PlatformSlotFilter.SLOT_2, "卡槽 2", uiState.summary.slot2),
             SlotCardUi(com.makia.hedgehogsms.classification.PlatformSlotFilter.UNKNOWN, "未知卡槽", uiState.summary.unknown),
         ),
-        selectedSlotMessages = uiState.slotDetailMessages.map { sms ->
-            EvidenceMessageUi(
-                messageId = sms.id,
-                senderText = sms.sender.orEmpty(),
-                receivedAtText = java.text.DateFormat.getDateTimeInstance().format(java.util.Date(sms.dateMillis)),
-                simAndSlotText = uiState.selectedSlotFilter?.let { slotFilter ->
-                    when (slotFilter) {
-                        com.makia.hedgehogsms.classification.PlatformSlotFilter.SLOT_1 -> "卡槽 1"
-                        com.makia.hedgehogsms.classification.PlatformSlotFilter.SLOT_2 -> "卡槽 2"
-                        com.makia.hedgehogsms.classification.PlatformSlotFilter.UNKNOWN -> "未知卡槽"
-                        com.makia.hedgehogsms.classification.PlatformSlotFilter.ALL -> "全部卡槽"
-                    }
-                } ?: "卡槽信息以扫描索引为准",
-            )
-        },
+        selectedSlotPlatforms = selectedSlotPlatformSummaries,
         slotDetailLoading = uiState.slotDetailLoading,
         slotDetailErrorText = uiState.slotDetailErrorText,
         slotDetailPermissionUnavailable = uiState.slotDetailPermissionUnavailable,
-        labels = uiState.labelPlatforms.map { platform ->
-            ManagedLabelUi(
-                id = platform.platformKey,
-                displayName = platform.displayName,
-                renameDraft = labelDrafts[platform.platformKey] ?: platform.displayName,
-                aliasesText = "别名治理需要先选择目标并确认",
-            )
-        },
+        labels = managedLabels,
         actionNotice = governanceNotice,
     )
     val platformCallbacks = PlatformScreensCallbacks(
         onNavigation = { event ->
             when (event) {
-                is PlatformNavigationEvent.OpenPlatform -> uiState.platforms.firstOrNull { it.platformKey == event.platformId }
-                    ?.let(inboxViewModel::loadPlatformEvidence)
+                is PlatformNavigationEvent.OpenPlatform -> {
+                    val slotFilter = platformNavigation.selectedSlot ?: uiState.platformSlotFilter
+                    val platform = if (platformNavigation.selectedSlot == null) {
+                        uiState.platforms.firstOrNull { it.platformKey == event.platformId }
+                    } else {
+                        uiState.slotDetailPlatforms.firstOrNull { it.platformKey == event.platformId }
+                    }
+                    platform?.let { inboxViewModel.loadPlatformEvidence(it, slotFilter) }
+                }
                 PlatformNavigationEvent.ClosePlatform -> inboxViewModel.closePlatformEvidence()
                 PlatformNavigationEvent.CloseMessageDetail -> selected = null
                 is PlatformNavigationEvent.OpenMessageDetail -> Unit
@@ -397,10 +456,10 @@ private fun Inbox(
                 ),
             )
         },
-        onOpenSlotMessage = { messageId, slot ->
-            platformNavigation = platformNavigation.reducePlatformNavigation(
-                PlatformNavigationEvent.OpenMessageDetail(messageId, MessageDetailSource.SlotDetail(slot)),
-            )
+        onOpenSlotPlatform = { platform, slot ->
+            uiState.slotDetailPlatforms.firstOrNull { it.platformKey == platform.id }
+                ?.let { inboxViewModel.loadPlatformEvidence(it, slot) }
+            platformNavigation = platformNavigation.reducePlatformNavigation(PlatformNavigationEvent.OpenPlatform(platform.id))
         },
         onAcceptSuggestedLabel = { messageId ->
             selectedPendingLabel?.let { label ->

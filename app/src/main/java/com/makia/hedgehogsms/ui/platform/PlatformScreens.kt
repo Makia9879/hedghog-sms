@@ -1,5 +1,17 @@
 package com.makia.hedgehogsms.ui.platform
 
+import android.content.Context
+import android.os.Build
+import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
+import android.text.Editable
+import android.text.InputType
+import android.text.TextWatcher
+import android.view.View
+import android.view.WindowInsets as AndroidWindowInsets
+import android.view.inputmethod.InputMethodManager
+import android.view.inputmethod.EditorInfo
+import android.widget.EditText
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -7,8 +19,12 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -18,7 +34,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -27,14 +42,19 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.zIndex
 import com.makia.hedgehogsms.classification.PlatformSlotFilter
 
 enum class PrimaryDestination(val label: String) {
@@ -181,6 +201,30 @@ data class PlatformSummaryUi(
     val unknownCount: Int = 0,
 )
 
+fun filterPlatformSummaries(platforms: List<PlatformSummaryUi>, query: String): List<PlatformSummaryUi> {
+    val clean = query.trim()
+    if (clean.isBlank()) return platforms
+    return platforms.filter { it.name.contains(clean, ignoreCase = true) || it.id.contains(clean, ignoreCase = true) }
+}
+
+fun filterManagedLabels(labels: List<ManagedLabelUi>, query: String): List<ManagedLabelUi> {
+    val clean = query.trim()
+    if (clean.isBlank()) return labels
+    return labels.filter { it.displayName.contains(clean, ignoreCase = true) || it.id.contains(clean, ignoreCase = true) }
+}
+
+fun labelListItemText(label: ManagedLabelUi): String = label.displayName
+
+private const val PageContentLayer = 0f
+private const val PageOverlayLayer = 1f
+
+fun bottomNavigationHeightDp(screenHeightDp: Int): Float = screenHeightDp * 0.10f
+
+fun shouldShowBottomNavigation(navigation: PlatformNavigationState, imeVisible: Boolean): Boolean =
+    !navigation.hidesBottomBar && !imeVisible
+
+fun shouldRequestKeyboardOnFocus(hasFocus: Boolean, enabled: Boolean): Boolean = hasFocus && enabled
+
 data class SlotCardUi(
     val filter: PlatformSlotFilter,
     val name: String,
@@ -241,7 +285,7 @@ data class PlatformScreensUiState(
     val pendingPermissionUnavailable: Boolean = false,
     val pendingLabelCount: Int = 0,
     val slots: List<SlotCardUi> = emptyList(),
-    val selectedSlotMessages: List<EvidenceMessageUi> = emptyList(),
+    val selectedSlotPlatforms: List<PlatformSummaryUi> = emptyList(),
     val slotDetailLoading: Boolean = false,
     val slotDetailErrorText: String? = null,
     val slotDetailPermissionUnavailable: Boolean = false,
@@ -259,6 +303,111 @@ data class MessageDetailUi(
 )
 
 const val MESSAGE_DETAIL_PERMISSION_UNAVAILABLE = "短信读取权限不可用"
+
+@Composable
+private fun SearchTextField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    label: String,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    autoFocus: Boolean = false,
+) {
+    val context = LocalContext.current
+    val focusManager = LocalFocusManager.current
+    val currentValue by rememberUpdatedState(value)
+    val currentOnValueChange by rememberUpdatedState(onValueChange)
+    var editText by remember { mutableStateOf<EditText?>(null) }
+    LaunchedEffect(autoFocus, enabled, editText) {
+        val target = editText
+        if (autoFocus && enabled && target != null) {
+            withFrameNanos { }
+            target.requestFocus()
+            showSoftInputFromAndroidView(context, target)
+        }
+    }
+    AndroidView(
+        modifier = modifier,
+        factory = { viewContext ->
+            EditText(viewContext).apply {
+                editText = this
+                hint = label
+                isSingleLine = true
+                inputType = InputType.TYPE_CLASS_TEXT
+                imeOptions = EditorInfo.IME_ACTION_SEARCH
+                setTextColor(Color.rgb(32, 29, 36))
+                setHintTextColor(Color.rgb(96, 91, 101))
+                textSize = 18f
+                minHeight = (56 * resources.displayMetrics.density).toInt()
+                setPadding(
+                    (16 * resources.displayMetrics.density).toInt(),
+                    0,
+                    (16 * resources.displayMetrics.density).toInt(),
+                    0,
+                )
+                background = searchFieldBackground()
+                setOnFocusChangeListener { focusedView, hasFocus ->
+                    if (shouldRequestKeyboardOnFocus(hasFocus, isEnabled)) {
+                        showSoftInputFromAndroidView(viewContext, focusedView)
+                    }
+                }
+                setOnEditorActionListener { _, actionId, _ ->
+                    if (actionId == EditorInfo.IME_ACTION_SEARCH) {
+                        focusManager.clearFocus()
+                        hideSoftInputFromAndroidView(viewContext, this)
+                        true
+                    } else {
+                        false
+                    }
+                }
+                addTextChangedListener(object : TextWatcher {
+                    override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+                    override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                        val next = s?.toString().orEmpty()
+                        if (next != currentValue) currentOnValueChange(next)
+                    }
+                    override fun afterTextChanged(s: Editable?) = Unit
+                })
+            }
+        },
+        update = { field ->
+            editText = field
+            field.hint = label
+            field.isEnabled = enabled
+            if (field.text.toString() != value) {
+                field.setText(value)
+                field.setSelection(field.text.length)
+            }
+        },
+    )
+}
+
+private fun searchFieldBackground(): GradientDrawable = GradientDrawable().apply {
+    shape = GradientDrawable.RECTANGLE
+    cornerRadius = 4f
+    setColor(Color.TRANSPARENT)
+    setStroke(3, Color.rgb(121, 116, 126))
+}
+
+private fun showSoftInputFromAndroidView(context: Context, view: View) {
+    val inputMethodManager = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+        ?: return
+    view.post {
+        if (!view.hasFocus()) {
+            view.requestFocus()
+        }
+        inputMethodManager.showSoftInput(view, InputMethodManager.SHOW_IMPLICIT)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            view.windowInsetsController?.show(AndroidWindowInsets.Type.ime())
+        }
+    }
+}
+
+private fun hideSoftInputFromAndroidView(context: Context, view: View) {
+    val inputMethodManager = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+        ?: return
+    inputMethodManager.hideSoftInputFromWindow(view.windowToken, 0)
+}
 
 fun messageDetailUi(
     navigation: MessageDetailNavigation?,
@@ -290,7 +439,7 @@ data class PlatformScreensCallbacks(
     val onCreateLabel: (Long) -> Unit,
     val onNewLabelDraftChange: (String) -> Unit,
     val onPlatformSlotFilterChange: (PlatformSlotFilter) -> Unit,
-    val onOpenSlotMessage: (Long, PlatformSlotFilter) -> Unit = { _, _ -> },
+    val onOpenSlotPlatform: (PlatformSummaryUi, PlatformSlotFilter) -> Unit = { _, _ -> },
     val onCreateStandaloneLabel: (String, List<LabelChoiceUi>) -> Unit = { _, _ -> },
     val onRequestSmsPermission: () -> Unit,
     val onOpenCreateLabel: (Long) -> Unit = {},
@@ -311,25 +460,22 @@ fun PlatformFeatureScaffold(
     BackHandler(enabled = state.navigation.systemBackEvent() != null) {
         state.navigation.systemBackEvent()?.let(callbacks.onNavigation)
     }
-    val showBottomBar = !state.navigation.hidesBottomBar
-    Scaffold(
-        modifier = modifier,
-        bottomBar = {
-            if (showBottomBar) {
-                NavigationBar {
-                    PrimaryDestination.entries.forEach { destination ->
-                        NavigationBarItem(
-                            selected = state.navigation.destination == destination,
-                            onClick = { callbacks.onNavigation(PlatformNavigationEvent.SelectDestination(destination)) },
-                            icon = { Text(destination.label.take(1)) },
-                            label = { Text(destination.label) },
-                        )
-                    }
-                }
-            }
-        },
-    ) { padding ->
-        val contentModifier = if (showBottomBar) Modifier.padding(padding) else Modifier
+    val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+    val showBottomBar = shouldShowBottomNavigation(state.navigation, imeVisible)
+    val bottomBarHeight = bottomNavigationHeightDp(LocalConfiguration.current.screenHeightDp).dp
+    Box(modifier.fillMaxSize()) {
+        val contentModifier = if (showBottomBar) {
+            Modifier
+                .fillMaxSize()
+                .padding(bottom = bottomBarHeight)
+                .imePadding()
+                .zIndex(PageContentLayer)
+        } else {
+            Modifier
+                .fillMaxSize()
+                .imePadding()
+                .zIndex(PageContentLayer)
+        }
         if (state.navigation.detail != null) {
             MessageDetailScreen(state.messageDetail, callbacks.onNavigation, callbacks.onRequestSmsPermission, contentModifier)
         } else when {
@@ -354,7 +500,7 @@ fun PlatformFeatureScaffold(
             state.navigation.selectedSlot != null -> SlotDetailScreen(
                 state.navigation.selectedSlot,
                 state.slots.firstOrNull { it.filter == state.navigation.selectedSlot },
-                state.selectedSlotMessages,
+                state.selectedSlotPlatforms,
                 state.slotDetailLoading,
                 state.slotDetailErrorText,
                 state.slotDetailPermissionUnavailable,
@@ -372,6 +518,25 @@ fun PlatformFeatureScaffold(
                 PrimaryDestination.PLATFORMS -> PlatformListScreen(state.platforms, callbacks, contentModifier)
                 PrimaryDestination.SLOTS -> SlotListScreen(state.slots, callbacks, contentModifier)
                 PrimaryDestination.LABELS -> LabelListScreen(state.labels, state.actionNotice, callbacks, contentModifier)
+            }
+        }
+        if (showBottomBar) {
+            NavigationBar(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .height(bottomBarHeight)
+                    .zIndex(PageOverlayLayer),
+                windowInsets = WindowInsets(0.dp),
+            ) {
+                PrimaryDestination.entries.forEach { destination ->
+                    NavigationBarItem(
+                        selected = state.navigation.destination == destination,
+                        onClick = { callbacks.onNavigation(PlatformNavigationEvent.SelectDestination(destination)) },
+                        icon = { Text(destination.label.take(1)) },
+                        label = { Text(destination.label) },
+                    )
+                }
             }
         }
     }
@@ -415,14 +580,13 @@ fun PlatformListScreen(
     modifier: Modifier = Modifier,
 ) {
     var query by remember { mutableStateOf("") }
-    val filtered = platforms.filter { it.name.contains(query, ignoreCase = true) || it.id.contains(query, ignoreCase = true) }
+    val filtered = filterPlatformSummaries(platforms, query)
     LazyColumn(modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
-            OutlinedTextField(
+            SearchTextField(
                 value = query,
                 onValueChange = { query = it },
-                label = { Text("搜索平台") },
-                singleLine = true,
+                label = "搜索平台",
                 modifier = Modifier.fillMaxWidth(),
             )
         }
@@ -500,7 +664,7 @@ fun PendingLabelScreen(
     }
     Box(modifier.fillMaxSize()) {
         LazyColumn(
-            Modifier.fillMaxSize(),
+            Modifier.fillMaxSize().zIndex(PageContentLayer),
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -532,15 +696,15 @@ fun PendingLabelScreen(
             }
             if (choosing) {
                 item {
-                    OutlinedTextField(
+                    SearchTextField(
                         value = candidate.labelSearchText,
                         onValueChange = {
                             callbacks.onNewLabelDraftChange(it)
                             selectionConfirmed = false
                         },
-                        label = { Text("搜索标注") },
-                        singleLine = true,
+                        label = "搜索标注",
                         enabled = !candidate.submitInProgress,
+                        autoFocus = true,
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }
@@ -573,7 +737,7 @@ fun PendingLabelScreen(
                     focusManager.clearFocus()
                     selectionConfirmed = true
                 },
-                modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp),
+                modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp).zIndex(PageOverlayLayer),
                 enabled = !candidate.submitInProgress,
             ) { Text("确认") }
         }
@@ -598,34 +762,46 @@ fun SlotListScreen(slots: List<SlotCardUi>, callbacks: PlatformScreensCallbacks,
 fun SlotDetailScreen(
     slot: PlatformSlotFilter?,
     slotCard: SlotCardUi?,
-    messages: List<EvidenceMessageUi>,
+    platforms: List<PlatformSummaryUi>,
     loading: Boolean,
     errorText: String?,
     permissionUnavailable: Boolean,
     callbacks: PlatformScreensCallbacks,
     modifier: Modifier = Modifier,
 ) {
+    var query by remember(slot) { mutableStateOf("") }
+    val filtered = filterPlatformSummaries(platforms, query)
     LazyColumn(modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item { TextButton(onClick = { callbacks.onNavigation(PlatformNavigationEvent.CloseSlot) }) { Text("返回") } }
         item { Text(slotCard?.name ?: "卡槽详情", style = MaterialTheme.typography.headlineMedium) }
         item { Text("短信数量 ${slotCard?.smsCount ?: 0}") }
+        item {
+            SearchTextField(
+                value = query,
+                onValueChange = { query = it },
+                label = "搜索平台",
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
         if (loading) item {
-            Text("正在读取卡槽短信...")
+            Text("正在读取卡槽平台...")
         } else if (permissionUnavailable) item {
             Text(MESSAGE_DETAIL_PERMISSION_UNAVAILABLE)
             Button(onClick = callbacks.onRequestSmsPermission) { Text("重新授权") }
         } else if (errorText != null) item {
             Text(errorText)
-        } else if (messages.isEmpty()) item { Text("此卡槽暂无可展示短信。") }
-        items(messages, key = { it.messageId }) { message ->
+        } else if (platforms.isEmpty()) item {
+            Text("此卡槽暂无已识别平台。")
+        } else if (filtered.isEmpty()) item {
+            Text("没有匹配的平台。")
+        }
+        items(filtered, key = { it.id }) { platform ->
             Card(Modifier.fillMaxWidth().clickable {
-                slot?.let { callbacks.onOpenSlotMessage(message.messageId, it) }
+                slot?.let { callbacks.onOpenSlotPlatform(platform, it) }
             }) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(message.senderText, style = MaterialTheme.typography.titleMedium)
-                    Text(message.receivedAtText)
-                    Text(message.simAndSlotText)
-                    Text(message.availabilityText)
+                    Text(platform.name, style = MaterialTheme.typography.titleMedium)
+                    Text("验证码 ${platform.verificationCodeCount} 条 · 最近 ${platform.latestAtText}")
                 }
             }
         }
@@ -636,13 +812,7 @@ fun SlotDetailScreen(
 fun LabelListScreen(labels: List<ManagedLabelUi>, actionNotice: String?, callbacks: PlatformScreensCallbacks, modifier: Modifier = Modifier) {
     var searchOpen by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
-    val focusRequester = remember { FocusRequester() }
-    LaunchedEffect(searchOpen) {
-        if (searchOpen) focusRequester.requestFocus()
-    }
-    val filtered = if (searchOpen) labels.filter {
-        it.displayName.contains(query, ignoreCase = true) || it.id.contains(query, ignoreCase = true)
-    } else labels
+    val filtered = if (searchOpen) filterManagedLabels(labels, query) else labels
     LazyColumn(modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -652,12 +822,12 @@ fun LabelListScreen(labels: List<ManagedLabelUi>, actionNotice: String?, callbac
         }
         if (searchOpen) {
             item {
-                OutlinedTextField(
+                SearchTextField(
                     value = query,
                     onValueChange = { query = it },
-                    label = { Text("搜索标签") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth().focusRequester(focusRequester),
+                    label = "搜索标签",
+                    autoFocus = true,
+                    modifier = Modifier.fillMaxWidth(),
                 )
             }
             if (query.isNotBlank()) {
@@ -676,8 +846,7 @@ fun LabelListScreen(labels: List<ManagedLabelUi>, actionNotice: String?, callbac
         items(filtered, key = { it.id }) { label ->
             Card(Modifier.fillMaxWidth().clickable { callbacks.onNavigation(PlatformNavigationEvent.OpenLabelDetail(label.id)) }) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(label.displayName, style = MaterialTheme.typography.titleMedium)
-                    Text(label.aliasesText)
+                    Text(labelListItemText(label), style = MaterialTheme.typography.titleMedium)
                 }
             }
         }
@@ -700,10 +869,6 @@ fun LabelCreateScreen(labels: List<ManagedLabelUi>, callbacks: PlatformScreensCa
     var mergeOpen by remember { mutableStateOf(false) }
     var mergeQuery by remember { mutableStateOf("") }
     val selected = remember { mutableStateListOf<LabelChoiceUi>() }
-    val focusRequester = remember { FocusRequester() }
-    LaunchedEffect(mergeOpen) {
-        if (mergeOpen) focusRequester.requestFocus()
-    }
     val choices = labels.map {
         LabelChoiceUi(
             labelId = it.id.hashCode().toLong(),
@@ -748,12 +913,12 @@ fun LabelCreateScreen(labels: List<ManagedLabelUi>, callbacks: PlatformScreensCa
         if (mergeOpen) {
             item {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(
+                    SearchTextField(
                         value = mergeQuery,
                         onValueChange = { mergeQuery = it },
-                        label = { Text("搜索已有标签") },
-                        singleLine = true,
-                        modifier = Modifier.weight(1f).focusRequester(focusRequester),
+                        label = "搜索已有标签",
+                        autoFocus = true,
+                        modifier = Modifier.weight(1f),
                     )
                     Button(
                         onClick = { mergeOpen = false },

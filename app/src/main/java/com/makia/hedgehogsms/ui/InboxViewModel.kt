@@ -38,11 +38,12 @@ data class InboxUiState(
     val platformSlotFilter: PlatformSlotFilter = PlatformSlotFilter.ALL,
     val pendingLabelCount: Int = 0,
     val selectedSlotFilter: PlatformSlotFilter? = null,
-    val slotDetailMessages: List<SmsRecord> = emptyList(),
+    val slotDetailPlatforms: List<PlatformSummary> = emptyList(),
     val slotDetailLoading: Boolean = false,
     val slotDetailErrorText: String? = null,
     val slotDetailPermissionUnavailable: Boolean = false,
     val selectedPlatform: PlatformSummary? = null,
+    val selectedPlatformSlotFilter: PlatformSlotFilter = PlatformSlotFilter.ALL,
     val platformEvidence: List<SmsRecord> = emptyList(),
     val platformEvidenceLoading: Boolean = false,
     val platformEvidenceErrorText: String? = null,
@@ -113,10 +114,14 @@ class InboxViewModel(
         }
     }
 
-    fun loadPlatformEvidence(platform: PlatformSummary) {
+    fun loadPlatformEvidence(
+        platform: PlatformSummary,
+        slotFilter: PlatformSlotFilter = pageState.value.platformSlotFilter,
+    ) {
         viewModelScope.launch {
             pageState.value = pageState.value.copy(
                 selectedPlatform = platform,
+                selectedPlatformSlotFilter = slotFilter,
                 platformEvidence = emptyList(),
                 platformEvidenceLoading = true,
                 platformEvidenceErrorText = null,
@@ -124,10 +129,11 @@ class InboxViewModel(
             )
             try {
                 val ids = container.database.classificationDao()
-                    .messageIdsForPlatform(platform.platformKey, pageState.value.platformSlotFilter.name, PAGE_SIZE, 0)
+                    .messageIdsForPlatform(platform.platformKey, slotFilter.name, PAGE_SIZE, 0)
                 val records = coroutineScope { ids.map { async { container.smsSource.byId(it) } }.awaitAll().filterNotNull() }
                 pageState.value = pageState.value.copy(
                     selectedPlatform = platform,
+                    selectedPlatformSlotFilter = slotFilter,
                     platformEvidence = records,
                     platformEvidenceLoading = false,
                     platformEvidenceErrorText = null,
@@ -136,6 +142,7 @@ class InboxViewModel(
             } catch (_: SmsPermissionUnavailableException) {
                 pageState.value = pageState.value.copy(
                     selectedPlatform = platform,
+                    selectedPlatformSlotFilter = slotFilter,
                     platformEvidence = emptyList(),
                     platformEvidenceLoading = false,
                     platformEvidenceErrorText = null,
@@ -145,6 +152,7 @@ class InboxViewModel(
                 if (error is CancellationException) throw error
                 pageState.value = pageState.value.copy(
                     selectedPlatform = platform,
+                    selectedPlatformSlotFilter = slotFilter,
                     platformEvidence = emptyList(),
                     platformEvidenceLoading = false,
                     platformEvidenceErrorText = "证据短信读取失败，请重试",
@@ -158,41 +166,27 @@ class InboxViewModel(
         viewModelScope.launch {
             pageState.value = pageState.value.copy(
                 selectedSlotFilter = slotFilter,
-                slotDetailMessages = emptyList(),
+                slotDetailPlatforms = emptyList(),
                 slotDetailLoading = true,
                 slotDetailErrorText = null,
                 slotDetailPermissionUnavailable = false,
             )
             try {
-                val indexes = container.database.messageIndexDao()
-                    .pageBySlotFilter(slotFilter, PAGE_SIZE, 0)
-                val records = coroutineScope {
-                    indexes.map { index -> async { container.smsSource.byId(index.sourceMessageId) } }
-                        .awaitAll()
-                        .filterNotNull()
-                }
+                val platforms = container.database.classificationDao().platformSummaries(slotFilter.name)
                 pageState.value = pageState.value.copy(
                     selectedSlotFilter = slotFilter,
-                    slotDetailMessages = records,
+                    slotDetailPlatforms = platforms,
                     slotDetailLoading = false,
                     slotDetailErrorText = null,
                     slotDetailPermissionUnavailable = false,
-                )
-            } catch (_: SmsPermissionUnavailableException) {
-                pageState.value = pageState.value.copy(
-                    selectedSlotFilter = slotFilter,
-                    slotDetailMessages = emptyList(),
-                    slotDetailLoading = false,
-                    slotDetailErrorText = null,
-                    slotDetailPermissionUnavailable = true,
                 )
             } catch (error: Exception) {
                 if (error is CancellationException) throw error
                 pageState.value = pageState.value.copy(
                     selectedSlotFilter = slotFilter,
-                    slotDetailMessages = emptyList(),
+                    slotDetailPlatforms = emptyList(),
                     slotDetailLoading = false,
-                    slotDetailErrorText = "卡槽短信读取失败，请重试",
+                    slotDetailErrorText = "卡槽平台读取失败，请重试",
                     slotDetailPermissionUnavailable = false,
                 )
             }
@@ -202,7 +196,7 @@ class InboxViewModel(
     fun closeSlotDetail() {
         pageState.value = pageState.value.copy(
             selectedSlotFilter = null,
-            slotDetailMessages = emptyList(),
+            slotDetailPlatforms = emptyList(),
             slotDetailLoading = false,
             slotDetailErrorText = null,
             slotDetailPermissionUnavailable = false,
@@ -216,11 +210,6 @@ class InboxViewModel(
             platformEvidenceLoading = false,
             platformEvidenceErrorText = null,
             platformEvidencePermissionUnavailable = false,
-            selectedSlotFilter = null,
-            slotDetailMessages = emptyList(),
-            slotDetailLoading = false,
-            slotDetailErrorText = null,
-            slotDetailPermissionUnavailable = false,
         )
     }
 
@@ -267,22 +256,24 @@ class InboxViewModel(
             .getOrNull() ?: return false
         viewModelScope.launch {
             val result = runCatching {
-                val features = container.featureExtractor.extract(message.body, message.sender)
-                container.trainingRepository.confirmHumanClassification(
-                    sampleId = message.id,
-                    sourceMessageId = message.id,
+                container.pendingLabelTrainingQueueRepository.enqueue(
+                    messageId = message.id,
                     labelId = label.labelId,
                     platformKey = label.platformKey,
                     displayName = clean,
-                    features = features,
                     now = System.currentTimeMillis(),
                 )
+                viewModelScope.launch { container.pendingLabelTrainingQueueRepository.drain() }
                 pageState.value = pageState.value.copy(pendingMessage = null)
                 loadPendingCandidate()
             }
             onComplete(result)
         }
         return true
+    }
+
+    fun drainPendingLabelTrainingQueue() = viewModelScope.launch {
+        container.pendingLabelTrainingQueueRepository.drain()
     }
 
     companion object {

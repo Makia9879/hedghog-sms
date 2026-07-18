@@ -137,12 +137,12 @@ class PlatformUiContractTest {
         assertTrue(state.selectedPlatformEvidence.isEmpty())
     }
 
-    @Test fun `slot detail can expose indexed messages without platform summaries`() {
-        val message = EvidenceMessageUi(
-            messageId = 10,
-            senderText = "Bank",
-            receivedAtText = "2026-07-17 10:00",
-            simAndSlotText = "卡槽 1",
+    @Test fun `slot detail exposes platform summaries instead of indexed messages`() {
+        val platform = PlatformSummaryUi(
+            id = "bank",
+            name = "Bank",
+            verificationCodeCount = 3,
+            latestAtText = "2026-07-17 10:00",
         )
         val state = PlatformScreensUiState(
             navigation = PlatformNavigationState(
@@ -150,33 +150,79 @@ class PlatformUiContractTest {
                 selectedSlot = com.makia.hedgehogsms.classification.PlatformSlotFilter.SLOT_1,
             ),
             platforms = emptyList(),
-            selectedSlotMessages = listOf(message),
+            selectedSlotPlatforms = listOf(platform),
             slots = listOf(
                 SlotCardUi(
                     com.makia.hedgehogsms.classification.PlatformSlotFilter.SLOT_1,
                     "卡槽 1",
-                    1,
+                    3,
                 ),
             ),
         )
 
         assertTrue(state.platforms.isEmpty())
-        assertEquals(listOf(message), state.selectedSlotMessages)
-        assertEquals(1, state.slots.single().smsCount)
+        assertEquals(listOf(platform), state.selectedSlotPlatforms)
+        assertEquals(3, state.slots.single().smsCount)
     }
 
-    @Test fun `slot detail permission state carries no message bodies`() {
+    @Test fun `slot detail permission state carries no message bodies or platform evidence`() {
         val state = PlatformScreensUiState(
             navigation = PlatformNavigationState(
                 destination = PrimaryDestination.SLOTS,
                 selectedSlot = com.makia.hedgehogsms.classification.PlatformSlotFilter.UNKNOWN,
             ),
-            selectedSlotMessages = emptyList(),
+            selectedSlotPlatforms = emptyList(),
             slotDetailPermissionUnavailable = true,
         )
 
         assertTrue(state.slotDetailPermissionUnavailable)
-        assertTrue(state.selectedSlotMessages.isEmpty())
+        assertTrue(state.selectedSlotPlatforms.isEmpty())
+    }
+
+    @Test fun `platform summary keyword filter matches display name and platform key`() {
+        val bank = PlatformSummaryUi("bank-key", "Bank", 1, "now")
+        val shop = PlatformSummaryUi("shop-key", "Shop", 1, "now")
+
+        assertEquals(listOf(bank, shop), filterPlatformSummaries(listOf(bank, shop), ""))
+        assertEquals(listOf(bank), filterPlatformSummaries(listOf(bank, shop), "ban"))
+        assertEquals(listOf(shop), filterPlatformSummaries(listOf(bank, shop), "SHOP-KEY"))
+        assertEquals(emptyList<PlatformSummaryUi>(), filterPlatformSummaries(listOf(bank, shop), "missing"))
+    }
+
+    @Test fun `managed label keyword filter matches label name and stable id`() {
+        val bank = ManagedLabelUi("bank-key", "Bank", "", "旧名：Bank Old")
+        val shop = ManagedLabelUi("shop-key", "Shop", "", "样本 3 条")
+
+        assertEquals(listOf(bank, shop), filterManagedLabels(listOf(bank, shop), ""))
+        assertEquals(listOf(bank), filterManagedLabels(listOf(bank, shop), "ban"))
+        assertEquals(listOf(shop), filterManagedLabels(listOf(bank, shop), "SHOP-KEY"))
+        assertEquals(emptyList<ManagedLabelUi>(), filterManagedLabels(listOf(bank, shop), "missing"))
+    }
+
+    @Test fun `label list item text only contains display name`() {
+        val label = ManagedLabelUi("bank-key", "Bank", "", "旧名：Bank Old · 样本 3 条")
+
+        assertEquals("Bank", labelListItemText(label))
+    }
+
+    @Test fun `bottom navigation height is ten percent of screen height`() {
+        assertEquals(84f, bottomNavigationHeightDp(840), 0.001f)
+        assertEquals(72.8f, bottomNavigationHeightDp(728), 0.001f)
+    }
+
+    @Test fun `bottom navigation is hidden while input method is visible`() {
+        val rootState = PlatformNavigationState()
+        val detailState = PlatformNavigationState(selectedPlatformId = "bank")
+
+        assertTrue(shouldShowBottomNavigation(rootState, imeVisible = false))
+        assertFalse(shouldShowBottomNavigation(rootState, imeVisible = true))
+        assertFalse(shouldShowBottomNavigation(detailState, imeVisible = false))
+    }
+
+    @Test fun `search field requests keyboard only when focused and enabled`() {
+        assertTrue(shouldRequestKeyboardOnFocus(hasFocus = true, enabled = true))
+        assertFalse(shouldRequestKeyboardOnFocus(hasFocus = false, enabled = true))
+        assertFalse(shouldRequestKeyboardOnFocus(hasFocus = true, enabled = false))
     }
 
     @Test fun `pending permission state carries no pending message body`() {

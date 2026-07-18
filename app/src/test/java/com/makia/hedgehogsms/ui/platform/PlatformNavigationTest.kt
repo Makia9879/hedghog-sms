@@ -35,13 +35,25 @@ class PlatformNavigationTest {
         assertNull(state.selectedPlatformId)
     }
 
-    @Test fun `opening message from slot detail returns to selected slot`() {
+    @Test fun `opening platform from slot detail returns to selected slot`() {
         val state = PlatformNavigationState(destination = PrimaryDestination.SLOTS, selectedSlot = PlatformSlotFilter.SLOT_1)
-            .reduce(PlatformNavigationEvent.OpenMessageDetail(7, MessageDetailSource.SlotDetail(PlatformSlotFilter.SLOT_1)))
+            .reduce(PlatformNavigationEvent.OpenPlatform("bank"))
+            .reduce(PlatformNavigationEvent.ClosePlatform)
+
+        assertEquals(PrimaryDestination.PLATFORMS, state.destination)
+        assertEquals(PlatformSlotFilter.SLOT_1, state.selectedSlot)
+        assertNull(state.selectedPlatformId)
+    }
+
+    @Test fun `opening message from platform reached through slot returns to platform evidence`() {
+        val state = PlatformNavigationState(destination = PrimaryDestination.SLOTS, selectedSlot = PlatformSlotFilter.SLOT_1)
+            .reduce(PlatformNavigationEvent.OpenPlatform("bank"))
+            .reduce(PlatformNavigationEvent.OpenMessageDetail(7, MessageDetailSource.PlatformEvidence("bank")))
             .reduce(PlatformNavigationEvent.CloseMessageDetail)
 
-        assertEquals(PrimaryDestination.SLOTS, state.destination)
+        assertEquals(PrimaryDestination.PLATFORMS, state.destination)
         assertEquals(PlatformSlotFilter.SLOT_1, state.selectedSlot)
+        assertEquals("bank", state.selectedPlatformId)
         assertNull(state.detail)
     }
 }
