@@ -1,19 +1,8 @@
 package com.makia.hedgehogsms.ui.platform
 
-import android.content.Context
-import android.os.Build
-import android.graphics.Color
-import android.graphics.drawable.GradientDrawable
-import android.text.Editable
-import android.text.InputType
-import android.text.TextWatcher
-import android.view.View
-import android.view.WindowInsets as AndroidWindowInsets
-import android.view.inputmethod.InputMethodManager
-import android.view.inputmethod.EditorInfo
-import android.widget.EditText
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -28,6 +17,8 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
@@ -44,16 +35,21 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.composed
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.zIndex
 import com.makia.hedgehogsms.classification.PlatformSlotFilter
 
@@ -313,100 +309,51 @@ private fun SearchTextField(
     enabled: Boolean = true,
     autoFocus: Boolean = false,
 ) {
-    val context = LocalContext.current
-    val focusManager = LocalFocusManager.current
-    val currentValue by rememberUpdatedState(value)
-    val currentOnValueChange by rememberUpdatedState(onValueChange)
-    var editText by remember { mutableStateOf<EditText?>(null) }
-    LaunchedEffect(autoFocus, enabled, editText) {
-        val target = editText
-        if (autoFocus && enabled && target != null) {
-            withFrameNanos { }
-            target.requestFocus()
-            showSoftInputFromAndroidView(context, target)
+    val focusRequester = remember { FocusRequester() }
+    val keyboardController = LocalSoftwareKeyboardController.current
+    LaunchedEffect(autoFocus, enabled) {
+        if (autoFocus && enabled) {
+            // Pure-Compose text field: focusing requests the IME through the
+            // Compose text input service, which avoids the View-based focus
+            // traversal that broke input connection creation on this device.
+            runCatching { focusRequester.requestFocus() }
+            keyboardController?.show()
         }
     }
-    AndroidView(
-        modifier = modifier,
-        factory = { viewContext ->
-            EditText(viewContext).apply {
-                editText = this
-                hint = label
-                isSingleLine = true
-                inputType = InputType.TYPE_CLASS_TEXT
-                imeOptions = EditorInfo.IME_ACTION_SEARCH
-                setTextColor(Color.rgb(32, 29, 36))
-                setHintTextColor(Color.rgb(96, 91, 101))
-                textSize = 18f
-                minHeight = (56 * resources.displayMetrics.density).toInt()
-                setPadding(
-                    (16 * resources.displayMetrics.density).toInt(),
-                    0,
-                    (16 * resources.displayMetrics.density).toInt(),
-                    0,
-                )
-                background = searchFieldBackground()
-                setOnFocusChangeListener { focusedView, hasFocus ->
-                    if (shouldRequestKeyboardOnFocus(hasFocus, isEnabled)) {
-                        showSoftInputFromAndroidView(viewContext, focusedView)
-                    }
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValueChange,
+        modifier = modifier
+            .focusRequester(focusRequester)
+            .onFocusChanged { state ->
+                if (shouldRequestKeyboardOnFocus(state.hasFocus, enabled)) {
+                    keyboardController?.show()
+                } else if (!state.hasFocus) {
+                    keyboardController?.hide()
                 }
-                setOnEditorActionListener { _, actionId, _ ->
-                    if (actionId == EditorInfo.IME_ACTION_SEARCH) {
-                        focusManager.clearFocus()
-                        hideSoftInputFromAndroidView(viewContext, this)
-                        true
-                    } else {
-                        false
-                    }
-                }
-                addTextChangedListener(object : TextWatcher {
-                    override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
-                    override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
-                        val next = s?.toString().orEmpty()
-                        if (next != currentValue) currentOnValueChange(next)
-                    }
-                    override fun afterTextChanged(s: Editable?) = Unit
-                })
-            }
-        },
-        update = { field ->
-            editText = field
-            field.hint = label
-            field.isEnabled = enabled
-            if (field.text.toString() != value) {
-                field.setText(value)
-                field.setSelection(field.text.length)
-            }
-        },
+            },
+        enabled = enabled,
+        label = { Text(label) },
+        singleLine = true,
+        textStyle = MaterialTheme.typography.bodyLarge,
+        keyboardOptions = KeyboardOptions(
+            keyboardType = KeyboardType.Text,
+            imeAction = ImeAction.Search,
+        ),
+        keyboardActions = KeyboardActions(
+            onSearch = { keyboardController?.hide() },
+        ),
     )
 }
 
-private fun searchFieldBackground(): GradientDrawable = GradientDrawable().apply {
-    shape = GradientDrawable.RECTANGLE
-    cornerRadius = 4f
-    setColor(Color.TRANSPARENT)
-    setStroke(3, Color.rgb(121, 116, 126))
-}
-
-private fun showSoftInputFromAndroidView(context: Context, view: View) {
-    val inputMethodManager = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
-        ?: return
-    view.post {
-        if (!view.hasFocus()) {
-            view.requestFocus()
-        }
-        inputMethodManager.showSoftInput(view, InputMethodManager.SHOW_IMPLICIT)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            view.windowInsetsController?.show(AndroidWindowInsets.Type.ime())
-        }
+// Tap target that does NOT register a focus node, so it stays out of Compose
+// focus traversal. Used for list cards to keep the search field the only
+// focusable node on screen, avoiding the beyond-bounds focus search that ANR'd.
+private fun Modifier.tapNoFocus(onClick: () -> Unit): Modifier = composed {
+    val currentOnClick by rememberUpdatedState(onClick)
+    pointerInput(Unit) {
+        detectTapGestures(onTap = { currentOnClick() })
     }
-}
-
-private fun hideSoftInputFromAndroidView(context: Context, view: View) {
-    val inputMethodManager = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
-        ?: return
-    inputMethodManager.hideSoftInputFromWindow(view.windowToken, 0)
 }
 
 fun messageDetailUi(
@@ -581,29 +528,33 @@ fun PlatformListScreen(
 ) {
     var query by remember { mutableStateOf("") }
     val filtered = filterPlatformSummaries(platforms, query)
-    LazyColumn(modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item {
-            SearchTextField(
-                value = query,
-                onValueChange = { query = it },
-                label = "搜索平台",
-                modifier = Modifier.fillMaxWidth(),
-            )
-        }
-        item {
-            Card(Modifier.fillMaxWidth().clickable { callbacks.onNavigation(PlatformNavigationEvent.OpenPendingLabels) }) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text("待标注平台", style = MaterialTheme.typography.titleMedium)
-                    Text("进入待标注短信页")
+    Column(modifier.fillMaxSize()) {
+        SearchTextField(
+            value = query,
+            onValueChange = { query = it },
+            label = "搜索平台",
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+        )
+        LazyColumn(
+            Modifier.fillMaxWidth().weight(1f),
+            contentPadding = PaddingValues(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            item {
+                Card(Modifier.fillMaxWidth().tapNoFocus { callbacks.onNavigation(PlatformNavigationEvent.OpenPendingLabels) }) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("待标注平台", style = MaterialTheme.typography.titleMedium)
+                        Text("进入待标注短信页")
+                    }
                 }
             }
-        }
-        if (filtered.isEmpty()) item { Text("没有匹配的平台。") }
-        items(filtered, key = { it.id }) { platform ->
-            Card(Modifier.fillMaxWidth().clickable { callbacks.onNavigation(PlatformNavigationEvent.OpenPlatform(platform.id)) }) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(platform.name, style = MaterialTheme.typography.titleMedium)
-                    Text("验证码 ${platform.verificationCodeCount} 条 · 最近 ${platform.latestAtText}")
+            if (filtered.isEmpty()) item { Text("没有匹配的平台。") }
+            items(filtered, key = { it.id }) { platform ->
+                Card(Modifier.fillMaxWidth().tapNoFocus { callbacks.onNavigation(PlatformNavigationEvent.OpenPlatform(platform.id)) }) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(platform.name, style = MaterialTheme.typography.titleMedium)
+                        Text("验证码 ${platform.verificationCodeCount} 条 · 最近 ${platform.latestAtText}")
+                    }
                 }
             }
         }
@@ -710,13 +661,19 @@ fun PendingLabelScreen(
                 }
                 items(candidate.existingLabels, key = { it.platformKey }) { label ->
                     val selected = candidate.selectedLabel == label
-                    TextButton(
-                        onClick = {
-                            callbacks.onChooseExistingLabel(candidate.messageId, if (selected) null else label)
-                            selectionConfirmed = false
-                        },
-                        enabled = !candidate.submitInProgress,
-                    ) { Text("${if (selected) "✓ " else ""}${label.displayName}") }
+                    Text(
+                        text = "${if (selected) "✓ " else ""}${label.displayName}",
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .tapNoFocus {
+                                if (!candidate.submitInProgress) {
+                                    callbacks.onChooseExistingLabel(candidate.messageId, if (selected) null else label)
+                                    selectionConfirmed = false
+                                }
+                            }
+                            .padding(vertical = 12.dp),
+                        color = if (candidate.submitInProgress) MaterialTheme.colorScheme.outline else MaterialTheme.colorScheme.primary,
+                    )
                 }
             }
             if (selectionConfirmed && candidate.selectedLabel != null) {
@@ -796,7 +753,7 @@ fun SlotDetailScreen(
             Text("没有匹配的平台。")
         }
         items(filtered, key = { it.id }) { platform ->
-            Card(Modifier.fillMaxWidth().clickable {
+            Card(Modifier.fillMaxWidth().tapNoFocus {
                 slot?.let { callbacks.onOpenSlotPlatform(platform, it) }
             }) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -844,7 +801,7 @@ fun LabelListScreen(labels: List<ManagedLabelUi>, actionNotice: String?, callbac
         actionNotice?.let { item { Text(it) } }
         if (filtered.isEmpty()) item { Text("还没有平台标签。") }
         items(filtered, key = { it.id }) { label ->
-            Card(Modifier.fillMaxWidth().clickable { callbacks.onNavigation(PlatformNavigationEvent.OpenLabelDetail(label.id)) }) {
+            Card(Modifier.fillMaxWidth().tapNoFocus { callbacks.onNavigation(PlatformNavigationEvent.OpenLabelDetail(label.id)) }) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(labelListItemText(label), style = MaterialTheme.typography.titleMedium)
                 }
@@ -929,9 +886,16 @@ fun LabelCreateScreen(labels: List<ManagedLabelUi>, callbacks: PlatformScreensCa
             if (ordered.isEmpty()) item { Text("输入搜索词后显示匹配标签。") }
             items(ordered, key = { it.platformKey }) { label ->
                 val isSelected = selected.any { it.platformKey == label.platformKey }
-                TextButton(onClick = {
-                    if (isSelected) selected.removeAll { it.platformKey == label.platformKey } else selected.add(label)
-                }) { Text("${if (isSelected) "✓ " else ""}${label.displayName}") }
+                Text(
+                    text = "${if (isSelected) "✓ " else ""}${label.displayName}",
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .tapNoFocus {
+                            if (isSelected) selected.removeAll { it.platformKey == label.platformKey } else selected.add(label)
+                        }
+                        .padding(vertical = 12.dp),
+                    color = MaterialTheme.colorScheme.primary,
+                )
             }
         }
     }
