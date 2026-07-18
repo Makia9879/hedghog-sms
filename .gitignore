@@ -10,3 +10,4 @@ captures/
 *.iml
 /.gradle-codex
 /.android-codex
+HANDOFF.md
