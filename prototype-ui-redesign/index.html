@@ -1,0 +1,1152 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>刺猬选短信 · UI 原型</title>
+  <!--
+    PROTOTYPE — throwaway UI, not production and not the Android app.
+    Question: what should 刺猬选短信 look like instead of four bottom tabs
+    (扫描 / 查看平台列表 / 查看卡槽 / 查看标签)?
+    Three structural variants, switchable via ?variant=A|B|C.
+  -->
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; }
+    body {
+      background: #d9d3c7;
+      color: #1c1c1c;
+      font: 15px/1.45 "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", sans-serif;
+    }
+    button, input, select { font: inherit; }
+    :focus-visible { outline: 2px solid #2457d6; outline-offset: 2px; }
+    .stage {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 300px;
+      gap: 28px;
+      max-width: 980px;
+      margin: 0 auto;
+      padding: 28px 24px 120px;
+      align-items: start;
+    }
+    .intro { grid-column: 1 / -1; max-width: 760px; }
+    .intro h1 { font-size: 22px; margin: 0 0 8px; font-weight: 650; }
+    .intro p { margin: 0 0 8px; }
+    .intro ul { margin: 8px 0 0; padding-left: 18px; }
+    .intro li { margin: 2px 0; }
+    .muted { color: #4e4a45; }
+    .device {
+      width: 390px;
+      height: min(800px, calc(100vh - 150px));
+      border-radius: 28px;
+      overflow: hidden;
+      position: relative;
+      justify-self: center;
+      box-shadow: 0 24px 60px #0003, 0 0 0 10px #1b1b1b;
+    }
+    .screen { height: 100%; overflow: auto; padding-bottom: 92px; }
+    .device button { border: 0; background: none; color: inherit; padding: 0; cursor: pointer; text-align: left; font: inherit; }
+    .device input, .device select { font: inherit; color: inherit; }
+    .panel {
+      position: sticky;
+      top: 16px;
+      max-height: calc(100vh - 32px);
+      overflow: auto;
+      background: #171717;
+      color: #eee;
+      padding: 14px 14px 96px;
+      font: 12px/1.45 ui-monospace, "SF Mono", Menlo, monospace;
+    }
+    .panel h2 { margin: 0 0 8px; font: inherit; color: #fff; }
+    .panel p, .panel label { color: #c8c8c8; }
+    .panel select { width: 100%; margin: 4px 0 12px; font: inherit; background: #111; color: #fff; border: 1px solid #444; padding: 6px; }
+    .panel pre { white-space: pre-wrap; margin: 8px 0 0; color: #d7d7d7; }
+    .switch {
+      position: fixed;
+      z-index: 40;
+      left: 50%;
+      bottom: 16px;
+      transform: translateX(-50%);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      max-width: calc(100vw - 20px);
+      background: #111;
+      color: #fff;
+      border-radius: 999px;
+      padding: 8px;
+      box-shadow: 0 10px 30px #0006;
+    }
+    @media (min-width: 861px) {
+      .switch {
+        left: auto;
+        right: max(24px, calc((100vw - 980px) / 2 + 24px));
+        transform: none;
+        width: 300px;
+        border-radius: 16px;
+      }
+      .switch-label { min-width: 0; flex: 1; }
+    }
+    .switch > button {
+      width: 36px; height: 36px; border: 0; border-radius: 50%;
+      background: #2c2c2c; color: #fff; font-size: 18px; cursor: pointer;
+    }
+    .switch strong { display: block; font-size: 13px; }
+    .switch small { display: block; color: #c8c8c8; font-size: 11px; max-width: 230px; }
+    .switch-label { min-width: 180px; text-align: center; }
+
+    .variant-a { background: #f4efe6; color: #221e1a; font-family: "Iowan Old Style", Palatino, "Palatino Linotype", "Songti SC", "Noto Serif SC", serif; }
+    .variant-b { background: #fbfbf8; color: #111; font-family: "Helvetica Neue", Helvetica, Arial, "PingFang SC", "Noto Sans SC", sans-serif; }
+    .variant-c { background: #101418; color: #f4f1ea; font-family: "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", sans-serif; }
+    .num { font-variant-numeric: tabular-nums; }
+    .variant-c .num { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+
+    .variant-a .top { display: flex; justify-content: space-between; align-items: flex-start; padding: 18px 16px 0; gap: 12px; }
+    .variant-a h1, .variant-a h2, .variant-b h1, .variant-b h2, .variant-c h1, .variant-c h2 { margin: 0; font-weight: 650; }
+    .variant-a h1 { font-size: 26px; }
+    .variant-a .sub, .variant-a .meta, .variant-a .fine { color: #5e564c; font-size: 13px; }
+    .variant-a .sub { margin: 4px 0 0; }
+    .variant-a .tools { display: flex; gap: 14px; flex: none; }
+    .variant-a .tools button, .variant-a .rename, .variant-a .textbtn { text-decoration: underline; text-underline-offset: 3px; font-size: 14px; }
+    .variant-a .scan { margin: 14px 16px 0; padding: 10px 12px; background: #e7f2eb; display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; align-items: center; }
+    .variant-a .scan.wait { background: #f8e7d2; }
+    .variant-a .scan.bad { background: #f6d9d2; }
+    .variant-a .scan.done { background: #eceae4; }
+    .variant-a .scan b { font-size: 15px; }
+    .variant-a .scan .bar, .variant-c .meter { height: 3px; background: #c9ddd2; }
+    .variant-a .scan .bar, .variant-a .scan .fine { grid-column: 1 / -1; }
+    .variant-a .scan .bar i, .variant-c .meter i { display: block; height: 100%; background: #1f6b45; }
+    .variant-c .meter { background: #2a312c; }
+    .variant-c .meter i { background: #e8a15a; }
+    .variant-a .passports { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 14px 16px 0; }
+    .variant-a .passport { position: relative; background: #fffdf8; border: 1px solid #ddd4c6; min-height: 132px; }
+    .variant-a .passport.on { border-color: #1f6b45; box-shadow: inset 3px 0 0 #1f6b45; }
+    .variant-a .passport-hit { display: block; width: 100%; padding: 12px 12px 28px; }
+    .variant-a .passport form { padding: 12px; }
+    .variant-a .kicker { display: block; font-size: 11px; letter-spacing: 0.08em; color: #1f6b45; }
+    .variant-a .nm { display: block; font-size: 20px; margin: 4px 0; }
+    .variant-a .rename { position: absolute; right: 10px; bottom: 8px; }
+    .variant-a .pad { padding: 12px 16px 28px; }
+    .variant-a .chips { display: flex; gap: 6px; overflow: auto; padding: 8px 0; }
+    .variant-a .chip { border: 1px solid #ddd4c6; background: #fff; border-radius: 999px; padding: 6px 10px; font-size: 12px; white-space: nowrap; }
+    .variant-a .chip.on { background: #221e1a; color: #fff; border-color: #221e1a; }
+    .variant-a .line, .variant-a .search, .variant-b .search, .variant-c .search, .variant-a .field, .variant-b .field {
+      width: 100%; border: 0; border-bottom: 1px solid #221e1a; background: transparent; padding: 8px 0; border-radius: 0;
+    }
+    .variant-b .search, .variant-b .field { border-bottom-color: #111; }
+    .variant-a .row, .variant-a .choice { width: 100%; padding: 13px 0; border-bottom: 1px solid #e2d9c9; }
+    .variant-a .row { display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; }
+    .variant-a .row b, .variant-a .choice b { font-size: 17px; }
+    .variant-a .pending-row { border-bottom: 0; background: transparent; color: #9d341f; padding: 12px 0; width: 100%; }
+    .variant-a .page { padding: 8px 16px 32px; }
+    .variant-a .back, .variant-b .back, .variant-c .back { display: inline-block; padding: 14px 0 8px; font-size: 14px; }
+    .variant-a .body, .variant-c .body { font-size: 18px; line-height: 1.45; margin: 8px 0; }
+    .variant-a .meta-list { margin: 12px 0 0; }
+    .variant-a .meta-list div, .variant-b .meta-list div, .variant-c .meta-list div { display: grid; grid-template-columns: 96px 1fr; gap: 8px; padding: 7px 0; border-top: 1px solid #e2d9c9; font-size: 14px; }
+    .variant-b .meta-list div { border-top-color: #111; }
+    .variant-c .meta-list div { border-top-color: #2a312c; }
+    .variant-a .btn.solid, .variant-b .btn.solid { display: inline-block; background: #1f6b45; color: #fff; padding: 12px 14px; }
+    .variant-b .btn.solid { background: #111; }
+    .variant-a .confirmbar { position: sticky; bottom: 76px; padding: 12px 16px 16px; background: #f4efe6; border-top: 1px solid #e2d9c9; }
+    .variant-a .confirmbar .btn.solid, .variant-c .confirmbar .btn.solid { width: 100%; }
+    .variant-a .choice.on, .variant-c .choice.on { font-weight: 700; }
+    .variant-a .form-row { display: flex; gap: 12px; align-items: center; margin-top: 10px; }
+    .variant-a .note, .variant-b .note, .variant-c .note { font-size: 13px; margin: 8px 0; }
+    .variant-a .note { border-left: 2px solid #9d341f; padding-left: 8px; }
+    .banner, .wall { margin: 12px 16px; padding: 10px 0; }
+    .variant-a .banner, .variant-a .wall { margin-left: 0; margin-right: 0; }
+    .variant-b .banner, .variant-b .wall { margin: 0 0 12px; padding: 8px 0; border-top: 1px solid #111; border-bottom: 1px solid #111; }
+    .variant-c .banner, .variant-c .wall { margin: 12px 0; color: #f0d2b0; }
+    .empty { padding: 8px 0 16px; }
+
+    .toast { padding: 10px 16px; font-size: 13px; }
+    .variant-a .toast { background: #e7f2eb; }
+    .variant-b .toast { background: #ffe14a; color: #111; }
+    .variant-c .toast { background: #3a2a16; color: #f0d2b0; }
+
+    .variant-b .mast { padding: 22px 20px 12px; }
+    .variant-b .kicker { font-size: 11px; letter-spacing: 0.16em; margin: 0 0 8px; }
+    .variant-b h1 { font-size: 40px; letter-spacing: -0.04em; line-height: 0.95; }
+    .variant-b .lede { margin: 10px 0 0; max-width: 28em; }
+    .variant-b .index { position: sticky; top: 0; z-index: 2; display: flex; flex-wrap: wrap; background: #fbfbf8; border-top: 1px solid #111; border-bottom: 1px solid #111; }
+    .variant-b .index button { padding: 10px 8px; white-space: nowrap; border-right: 1px solid #111; border-bottom: 1px solid #111; font-size: 12px; flex: 1 0 auto; }
+    .variant-b .section { padding: 26px 20px 8px; border-top: 1px solid #111; scroll-margin-top: 84px; }
+    .variant-b h2 { font-size: 28px; letter-spacing: -0.03em; }
+    .variant-b .entry { display: block; width: 100%; padding: 12px 0; border-top: 1px solid #111; }
+    .variant-b .entry b { display: block; font-size: 18px; }
+    .variant-b .entry span, .variant-b .fine, .variant-b .meta { display: block; color: #333; font-size: 13px; }
+    .variant-b .choice { display: block; width: 100%; text-align: left; padding: 10px 0; border-top: 1px solid #111; }
+    .variant-b .btn.solid { margin: 8px 0; }
+    .variant-b .page { padding: 0 20px 36px; }
+    .variant-b .excerpt { font-size: 22px; line-height: 1.4; font-weight: 500; margin: 12px 0 18px; }
+    .variant-b .quote { margin: 8px 0 12px; padding: 8px 0; border-top: 1px solid #111; border-bottom: 1px solid #111; font-size: 20px; line-height: 1.4; }
+    .variant-b ol { margin: 8px 0 16px; padding-left: 20px; }
+    .variant-b li { margin: 6px 0; }
+    .variant-b .mark { background: #ffe14a; }
+
+    .variant-c .home { min-height: 100%; display: flex; flex-direction: column; padding: 22px 20px 24px; }
+    .variant-c .word { font-size: 12px; letter-spacing: 0.18em; color: #9aa194; }
+    .variant-c .hero-num { font-size: 92px; line-height: 0.85; color: #e8a15a; margin: 18px 0 0; }
+    .variant-c h1 { font-size: 22px; font-weight: 600; margin-top: 8px; }
+    .variant-c .primary, .variant-c .btn.solid { display: block; width: 100%; background: #e8a15a; color: #1a1208; padding: 14px 16px; font-weight: 700; margin-top: 16px; text-align: left; }
+    .variant-c .stack-link { display: block; width: 100%; padding: 16px 0; border-top: 1px solid #2a312c; margin-top: 18px; }
+    .variant-c .stack-link b { display: block; font-size: 16px; }
+    .variant-c .fine { color: #9aa194; font-size: 13px; }
+    .variant-c .choice .fine { display: block; }
+    .variant-c .scanjob { margin-top: auto; padding-top: 22px; }
+    .variant-c .page { padding: 6px 20px 28px; }
+    .variant-c .search, .variant-c .field { width: 100%; background: #0c0f12; border: 1px solid #2a312c; padding: 10px 12px; border-radius: 0; margin: 8px 0; }
+    .variant-c .checkline { display: grid; grid-template-columns: 28px 1fr; gap: 8px; align-items: start; padding: 12px 0; border-bottom: 1px solid #2a312c; }
+    .variant-c .checkline.done { opacity: 0.55; }
+    .variant-c .box { width: 18px; height: 18px; border: 1px solid #e8a15a; margin-top: 2px; }
+    .variant-c .box.on { background: #e8a15a; }
+    .variant-c .checkmain { display: block; width: 100%; }
+    .variant-c .checkmain b { display: block; font-size: 17px; }
+    .variant-c .choice { display: block; width: 100%; padding: 12px 0; border-bottom: 1px solid #2a312c; font-size: 16px; }
+    .variant-c .confirmbar { position: sticky; bottom: 76px; background: #101418; padding: 12px 0 8px; }
+    .variant-c .scrim { position: absolute; inset: 0; background: #0008; border: 0; z-index: 4; }
+    .variant-c .sheet { position: absolute; left: 0; right: 0; bottom: 0; top: 16%; background: #1b2126; border-top: 1px solid #e8a15a; z-index: 5; overflow: auto; padding: 8px 16px 28px; }
+    .variant-c .grab { width: 36px; height: 3px; background: #e8a15a; margin: 6px auto 12px; }
+    .danger { color: #9d341f; }
+    .variant-c .danger { color: #ff8d7a; }
+    .variant-b .danger { color: #111; text-decoration: underline; }
+
+    @media (max-width: 860px) {
+      .stage { grid-template-columns: 1fr; padding: 0 0 108px; gap: 0; }
+      .intro { padding: 16px; }
+      .device { width: 100%; height: calc(100dvh - 124px); border-radius: 0; box-shadow: none; }
+      .panel { position: static; margin: 12px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="stage" id="stage">
+    <header class="intro">
+      <h1>刺猬选短信 · 三套结构，还没定稿</h1>
+      <p>这是单独跑在 Docker 里的可交互原型，不改现在的 Android 应用，也没连真机短信。短信样本是虚构的。</p>
+      <p class="muted">现在的应用把「扫描 / 查看平台列表 / 查看卡槽 / 查看标签」分成四个底部入口。这三套都把主线收成一句：这张卡在哪些平台收过验证码，方便你自己去处理。</p>
+      <ul>
+        <li><b>A 卡证账本</b>：先选卡，再看这张卡的平台。扫描缩成一条状态。</li>
+        <li><b>B 证据卷宗</b>：没有仪表盘。卡槽是档案目录，短信详情是一页摘录。</li>
+        <li><b>C 处理队列</b>：先把对不上的确认掉，已识别的平台是一张自己去处理的清单。</li>
+      </ul>
+      <p class="muted">用右下角黑条，或键盘 ← → 切换。右侧可以改扫描和权限，用来看边界，不是应用里的界面。</p>
+    </header>
+    <div class="device" id="device"></div>
+    <aside class="panel" id="state"></aside>
+  </div>
+  <nav class="switch" aria-label="方案切换">
+    <button type="button" id="prev" aria-label="上一方案">←</button>
+    <div class="switch-label">
+      <strong id="variantLabel"></strong>
+      <small id="variantThesis"></small>
+    </div>
+    <button type="button" id="next" aria-label="下一方案">→</button>
+  </nav>
+  <script>
+const SLOT_LABEL = { slot1: '卡槽 1', slot2: '卡槽 2', unknown: '未知卡槽' };
+const META = {
+  A: { name: '卡证账本', short: '先选卡，再看平台', note: '去掉四个底部标签。主线是两张 SIM 卡，卡槽只做筛选。扫描缩成一条状态。名称和隐私收进次级页面。确认平台只按一次。' },
+  B: { name: '证据卷宗', short: '按卡槽写成一份档案', note: '没有仪表盘，也没有底部导航。卡槽是目录章节，同一个平台会在每个有证据的章节里各出现一次。短信详情是摘录。扫描和隐私在文末。' },
+  C: { name: '处理队列', short: '先确认，再自己去处理', note: '打开先看到还要对上的数量。已识别平台是清单，可标「我已自行处理」，不会登录或注销。卡槽是下拉，按扫描快照筛选。标签不占主导航。' },
+};
+const MESSAGES = [];
+function msg(id, platform, sender, body, at, ord, slot, sim, extra) {
+  extra = extra || {};
+  MESSAGES.push({
+    id, platform, pending: platform == null, sender, body, at, ord, slot, sim,
+    hint: extra.hint || '', slotReason: extra.slotReason || '', byUser: false,
+  });
+}
+msg('m1', '微信', '1069001234', '【腾讯科技】微信验证码 482913，5 分钟内有效。如非本人操作请忽略。', '今天 09:41', 99, 'slot1', 's1');
+msg('m2', '微信', '1069001234', '【微信】登录验证码 110283。请勿告知他人。', '9月16日 18:02', 68, 'slot1', 's1');
+msg('m16', '微信', '1069001234', '【微信】验证码 667701，用于登录。', '5月2日 13:18', 4, 'slot2', 's1', { slotReason: '扫描时这张卡插在卡槽 2。后来它回到卡槽 1。快照保持扫描当时的位置。' });
+msg('m3', '支付宝', '95188', '【支付宝】校验码 773201，你正在登录支付宝。', '昨天 21:06', 88, 'slot1', 's1');
+msg('m4', '支付宝', '95188', '【支付宝】验证码 660194，你正在换绑手机。', '9月3日 11:20', 50, 'slot2', 's2');
+msg('m15', '支付宝', '95188', '【支付宝】验证码 101010。', '6月1日 10:10', 8, 'unknown', 's2', { slotReason: '旧订阅已经不在这台手机上，不能当成现在的卡槽。' });
+msg('m5', '淘宝', '1069009988', '【淘宝】验证码 334455，15 分钟内有效。', '9月18日 14:22', 70, 'slot2', 's2');
+msg('m6', '美团', '10107888', '【美团】验证码 908172。', '9月12日 12:08', 60, 'slot1', 's1');
+msg('m7', '京东', '1069005555', '【京东】验证码 445566，请勿告知他人。', '9月2日 09:15', 48, 'slot2', 's2');
+msg('m8', '京东', '1069005555', '【京东】验证码 778899。', '8月2日 19:40', 30, 'slot2', 's2');
+msg('m9', '拼多多', '1069007777', '【拼多多】验证码 246801。', '8月30日 16:33', 40, 'slot1', 's1');
+msg('m10', '抖音', '1069003333', '【抖音】验证码 135790，用于验证身份。', '8月21日 20:18', 35, 'slot2', 's2');
+msg('m11', '小红书', '1069002222', '【小红书】验证码 864209。', '8月11日 13:55', 28, 'unknown', 's1', { slotReason: '扫描时没有落在有效卡槽里。' });
+msg('m12', '招商银行', '95555', '【招商银行】验证码 192837。招商银行不会向你索要验证码。', '7月28日 08:04', 20, 'slot1', 's1');
+msg('m13', '铁路12306', '12306', '【铁路12306】验证码 564738。', '7月2日 07:46', 16, 'slot2', 's2');
+msg('m14', '网易云音乐', '1069001111', '【网易】验证码 314159，用于登录网易云音乐。', '6月19日 22:11', 12, 'slot1', 's1');
+msg('p1', null, '106912345678', '您的动态验证码为 229184，有效期 5 分钟。', '今天 08:12', 100, 'slot2', 's2', { hint: '正文没有品牌或签名。这个短码可能被多个平台共用，不能直接当成某个平台。' });
+msg('p2', null, '106598765432', '校验码 883344，请在页面输入完成验证。', '昨天 19:44', 90, 'slot1', 's1', { hint: '只有“校验码”，没有平台名。本机还没有足够的同号确认记录。' });
+msg('p3', null, '17000001111', '验证码 556677。请勿告诉他人。', '9月20日 15:02', 80, 'unknown', 's1', { hint: '虚拟号，而且扫描时没有有效卡槽。这里会显示未知，不会猜。', slotReason: '这条没有可用的卡槽快照。' });
+msg('p4', null, 'MiPay', 'Your verification code is 424242.', '9月9日 11:27', 55, 'slot1', 's1', { hint: '字母发送者只是弱证据。看起来像某个品牌，也不能因此自动归类。' });
+[
+  ['微信', 's1', 'slot1', 62, '8月28日 07:51', '1069001234'],
+  ['微信', 's1', 'slot1', 58, '8月2日 12:16', '1069001234'],
+  ['微信', 's1', 'slot1', 44, '7月18日 21:03', '1069001234'],
+  ['微信', 's1', 'slot1', 24, '6月30日 08:40', '1069001234'],
+  ['支付宝', 's1', 'slot1', 46, '7月22日 18:12', '95188'],
+  ['支付宝', 's2', 'slot2', 22, '6月28日 09:01', '95188'],
+  ['淘宝', 's2', 'slot2', 42, '7月14日 13:44', '1069009988'],
+  ['美团', 's1', 'slot1', 38, '7月9日 11:27', '10107888'],
+  ['美团', 's1', 'slot1', 18, '6月11日 19:19', '10107888'],
+  ['京东', 's2', 'slot2', 34, '7月1日 10:10', '1069005555'],
+  ['抖音', 's2', 'slot2', 32, '6月25日 22:48', '1069003333'],
+  ['招商银行', 's1', 'slot1', 26, '6月8日 07:55', '95555'],
+  ['拼多多', 's1', 'slot1', 15, '5月20日 16:02', '1069007777'],
+  ['网易云音乐', 's1', 'slot1', 10, '5月9日 20:20', '1069001111'],
+].forEach((row, i) => {
+  msg('x' + i, row[0], row[5], '【' + row[0] + '】验证码 ' + (310000 + row[3]) + '，请勿泄露给他人。', row[4], row[3], row[2], row[1]);
+});
+
+let labelSeq = 1;
+function makeLabel(name, aliases) {
+  return { id: 'l' + (labelSeq++), name, aliases: aliases || [] };
+}
+function seedLabels() {
+  const names = [];
+  MESSAGES.forEach((m) => { if (m.platform && names.indexOf(m.platform) < 0) names.push(m.platform); });
+  const labels = names.map((name) => makeLabel(name));
+  const ali = labels.find((l) => l.name === '支付宝');
+  if (ali) ali.aliases.push('支付宝App');
+  return labels;
+}
+
+const state = {
+  variant: 'A',
+  scan: 'running',
+  perm: 'ok',
+  screen: 'home',
+  stack: [],
+  slot: 'all',
+  sim: 's1',
+  simNames: { s1: '卡槽 1', s2: '卡槽 2' },
+  platform: '',
+  openedSlot: 'all',
+  messageId: '',
+  platformQuery: '',
+  labelQuery: '',
+  pendingQuery: '',
+  pendingSim: '',
+  pendingId: '',
+  pendingSelected: '',
+  pendingCreate: false,
+  newLabelName: '',
+  mergeIds: [],
+  labelId: '',
+  renameSim: '',
+  renameValue: '',
+  handled: {},
+  secure: true,
+  secureAsk: false,
+  clearStep: 0,
+  notice: '',
+  lastAction: '打开原型',
+  sheet: null,
+  focusSection: '',
+  labels: seedLabels(),
+};
+
+const boot = new URLSearchParams(location.search);
+if (['A', 'B', 'C'].includes(boot.get('variant'))) state.variant = boot.get('variant');
+if (['running', 'paused', 'battery', 'thermal', 'failed', 'done'].includes(boot.get('scan'))) state.scan = boot.get('scan');
+if (['ok', 'sms', 'phone'].includes(boot.get('perm'))) state.perm = boot.get('perm');
+
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+function smsOk() { return state.perm !== 'sms'; }
+function phoneOk() { return state.perm !== 'phone'; }
+function nowSlot(sim) { return sim === 's1' ? 'slot1' : 'slot2'; }
+function present(raw) {
+  const known = phoneOk();
+  return Object.assign({}, raw, {
+    slot: known ? raw.slot : 'unknown',
+    slotText: known ? SLOT_LABEL[raw.slot] : '未知卡槽',
+    nowText: known ? SLOT_LABEL[nowSlot(raw.sim)] : '未知卡槽',
+    reason: known ? raw.slotReason : '未授权电话状态，不能映射卡槽。',
+    simText: state.simNames[raw.sim] || raw.sim,
+  });
+}
+function summaries(opts) {
+  opts = opts || {};
+  const sim = opts.sim || null;
+  const slot = opts.slot || 'all';
+  const q = (opts.query || '').trim().toLowerCase();
+  const groups = new Map();
+  MESSAGES.forEach((raw) => {
+    if (raw.pending || !raw.platform) return;
+    if (sim && raw.sim !== sim) return;
+    const m = present(raw);
+    if (slot !== 'all' && m.slot !== slot) return;
+    if (q && raw.platform.toLowerCase().indexOf(q) < 0) return;
+    let g = groups.get(raw.platform);
+    if (!g) g = { name: raw.platform, count: 0, latest: m.at, ord: -1 };
+    g.count += 1;
+    if (m.ord > g.ord) { g.ord = m.ord; g.latest = m.at; }
+    groups.set(raw.platform, g);
+  });
+  return Array.from(groups.values()).sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, 'zh'));
+}
+function evidence(name, slot) {
+  return MESSAGES.map(present)
+    .filter((m) => m.platform === name && !m.pending && (slot === 'all' || m.slot === slot))
+    .sort((a, b) => b.ord - a.ord);
+}
+function otherSlotCount(name, slot) {
+  if (!slot || slot === 'all') return 0;
+  return MESSAGES.filter((raw) => raw.platform === name && !raw.pending && present(raw).slot !== slot).length;
+}
+function simStats(sim) {
+  const rows = summaries({ sim, slot: 'all' });
+  return { platforms: rows.length, messages: rows.reduce((n, r) => n + r.count, 0) };
+}
+function movedCount(sim) {
+  if (!phoneOk()) return 0;
+  const now = nowSlot(sim);
+  return MESSAGES.filter((m) => m.sim === sim && !m.pending && m.platform && m.slot !== 'unknown' && m.slot !== now).length;
+}
+function pendingRaw(sim) {
+  return MESSAGES.filter((m) => m.pending && (!sim || m.sim === sim)).sort((a, b) => b.ord - a.ord);
+}
+function nameTaken(q) {
+  const t = q.trim().toLowerCase();
+  if (!t) return true;
+  return state.labels.some((l) => l.name.toLowerCase() === t || l.aliases.some((a) => a.toLowerCase() === t));
+}
+function filteredLabels(q) {
+  const t = (q || '').trim().toLowerCase();
+  return state.labels.filter((l) => !t || l.name.toLowerCase().indexOf(t) >= 0 || l.aliases.some((a) => a.toLowerCase().indexOf(t) >= 0));
+}
+function labelCount(name) {
+  return MESSAGES.filter((m) => m.platform === name && !m.pending).length;
+}
+function findMessage(id) {
+  const raw = MESSAGES.find((m) => m.id === id);
+  return raw ? present(raw) : null;
+}
+function scanModel() {
+  if (state.perm === 'sms') {
+    return {
+      title: '等待短信权限',
+      detail: '没有读取权限时不扫描，也不显示正文。已经建好的索引还留着。',
+      actionLabel: '重新授权',
+      action: 'grant-sms',
+      pct: state.scan === 'done' ? 100 : 38,
+      tone: 'bad',
+    };
+  }
+  const table = {
+    running: ['正在温和扫描', '已建立 1842 条无正文索引。空闲时按小批继续，不复制短信正文。', '暂停', 'pause', 38, ''],
+    paused: ['历史扫描已暂停', '已经扫过的不会丢。继续时从上一批接着做。', '继续', 'resume', 38, 'wait'],
+    battery: ['等待电量恢复', '充电，或电量回到安全门槛之后，会自动继续。', '重新检查条件', 'recheck', 38, 'wait'],
+    thermal: ['等待设备降温', '温度回到安全范围之后，会自动继续。', '重新检查条件', 'recheck', 38, 'wait'],
+    failed: ['扫描遇到错误', '已经写入的索引还在，可以从断点重试。', '从断点重试', 'resume', 38, 'bad'],
+    done: ['历史扫描已完成', '新短信会在下次打开应用时补齐。系统里的短信不会被改动。', '重新完整扫描', 'restart', 100, 'done'],
+  };
+  const row = table[state.scan] || table.running;
+  let detail = row[1];
+  if (state.perm === 'phone') detail += ' 电话状态未授权，卡槽全部显示为未知。';
+  return { title: row[0], detail, actionLabel: row[2], action: row[3], pct: row[4], tone: row[5] };
+}
+function filterPhrase(slot) {
+  if (slot === 'all') return '全部卡槽快照';
+  if (slot === 'unknown') return '未知卡槽';
+  return SLOT_LABEL[slot] + ' 快照';
+}
+function secureNote() {
+  return state.secure
+    ? '真机上这一页会禁止截屏和最近任务预览。'
+    : '防截屏已关闭。发送者和正文可能出现在截图或最近任务里。';
+}
+function phoneBanner() {
+  if (state.perm !== 'phone') return '';
+  return '<div class="banner"><p>未授权电话状态。卡槽都显示为未知，不会猜测成卡槽 1 或 2。</p><button type="button" data-act="grant-phone">重新授权</button></div>';
+}
+function smsWall() {
+  return '<div class="wall"><p>短信读取权限不可用。列表和正文先隐藏，本地索引还在。</p><button type="button" class="btn solid" data-act="grant-sms">重新授权</button></div>';
+}
+function handledMark(name) {
+  return state.handled[name] ? ' · 你标过已自行处理' : '';
+}
+function metaList(m) {
+  const rows = [
+    ['发送者', m.sender],
+    ['时间', m.at],
+    ['SIM 集合', m.simText],
+    ['现在插在', m.nowText],
+    ['扫描时卡槽', m.slotText],
+    ['平台', m.platform || '待确认'],
+    ['正文来源', '系统信箱，打开时实时读取'],
+  ];
+  if (m.reason) rows.push(['卡槽说明', m.reason]);
+  if (m.byUser) rows.push(['学习', '这是你确认的。只影响这条和以后的预测，不改其他历史。']);
+  return '<div class="meta-list">' + rows.map((r) => '<div><span>' + esc(r[0]) + '</span><b>' + esc(r[1]) + '</b></div>').join('') + '</div>';
+}
+function go(screen) {
+  state.stack.push(state.screen);
+  state.screen = screen;
+  state.sheet = null;
+}
+function back() {
+  state.screen = state.stack.pop() || 'home';
+  state.sheet = null;
+  state.renameSim = null;
+}
+
+function renderA() {
+  if (state.screen === 'home') return renderAHome();
+  if (state.screen === 'platform') return renderAPlatform();
+  if (state.screen === 'message') return renderAMessage();
+  if (state.screen === 'pending') return renderPending('a');
+  if (state.screen === 'labels') return renderLabels('a');
+  if (state.screen === 'label') return renderLabelDetail('a');
+  if (state.screen === 'create') return renderCreate('a');
+  if (state.screen === 'settings') return renderSettings('a');
+  return renderAHome();
+}
+function renderAHome() {
+  const scan = scanModel();
+  const rows = summaries({ sim: state.sim, slot: state.slot, query: state.platformQuery });
+  const mine = pendingRaw(state.sim);
+  const other = pendingRaw('').length - mine.length;
+  const moved = movedCount(state.sim);
+  let list = '';
+  if (mine.length) {
+    list += '<button type="button" class="pending-row" data-act="open-pending" data-sim="' + state.sim + '">还有 ' + mine.length + ' 条对不上平台</button>';
+  } else if (other) {
+    list += '<p class="fine">另一张卡还有 ' + other + ' 条待确认。</p>';
+  }
+  if (!rows.length) {
+    const q = state.platformQuery.trim();
+    list += '<p class="empty">' + (q ? '没有匹配的平台。' : state.slot === 'all' ? '确认之后，平台会出现在这里。' : '此卡槽暂无已识别平台。') + '</p>';
+    if (!q && state.slot !== 'all') list += '<button type="button" class="textbtn" data-act="set-slot" data-slot="all">查看全部</button>';
+  } else {
+    list += rows.map((r) => '<button type="button" class="row" data-act="open-platform" data-name="' + esc(r.name) + '"><b>' + esc(r.name) + handledMark(r.name) + '</b><span class="num">' + r.count + '</span><span class="meta">最近 ' + esc(r.latest) + '</span><span></span></button>').join('');
+  }
+  const chips = [['all', '全部'], ['slot1', '卡槽 1'], ['slot2', '卡槽 2'], ['unknown', '未知']].map((c) => '<button type="button" class="chip ' + (state.slot === c[0] ? 'on' : '') + '" data-act="set-slot" data-slot="' + c[0] + '">' + c[1] + '</button>').join('');
+  return '<div class="top"><div><h1>刺猬选短信</h1><p class="sub">找出每张卡用过哪些平台。账号要你自己去处理。</p></div><div class="tools"><button type="button" data-act="open-labels">名称</button><button type="button" data-act="open-settings">隐私</button></div></div>'
+    + '<div class="scan ' + scan.tone + '"><b>' + esc(scan.title) + '</b><button type="button" class="textbtn" data-act="' + scan.action + '">' + esc(scan.actionLabel) + '</button><span class="fine">' + esc(scan.detail) + '</span><div class="bar"><i style="width:' + scan.pct + '%"></i></div></div>'
+    + '<div class="passports">' + passport('s1') + passport('s2') + '</div>'
+    + '<div class="pad">' + phoneBanner()
+    + '<p class="fine">按扫描时的卡槽快照筛选，不是按这张卡现在插在哪。' + (moved ? ' 这张卡有 ' + moved + ' 条是插在别的槽时收到的，快照不改写。' : '') + '</p>'
+    + '<div class="chips">' + chips + '</div>'
+    + '<input class="search" data-bind="platformQuery" data-live="1" value="' + esc(state.platformQuery) + '" placeholder="搜索这张卡的平台" aria-label="搜索这张卡的平台">'
+    + list + '</div>';
+}
+function passport(sim) {
+  const on = state.sim === sim ? ' on' : '';
+  const stats = simStats(sim);
+  const now = phoneOk() ? '现在插在' + SLOT_LABEL[nowSlot(sim)] : '当前卡槽未知';
+  if (state.renameSim === sim) {
+    return '<div class="passport' + on + '"><form data-act="commit-rename" data-sim="' + sim + '"><span class="kicker">SIM 集合</span><input class="field" data-bind="renameValue" value="' + esc(state.renameValue) + '" aria-label="SIM 集合名称"><div class="form-row"><button type="submit" class="btn solid">完成</button><button type="button" data-act="cancel-rename">取消</button></div></form></div>';
+  }
+  return '<div class="passport' + on + '"><button type="button" class="passport-hit" data-act="select-sim" data-sim="' + sim + '"><span class="kicker">SIM 集合</span><span class="nm">' + esc(state.simNames[sim]) + '</span><span class="meta">' + now + '</span><span class="meta">' + stats.platforms + ' 个平台 · ' + stats.messages + ' 条验证码</span></button><button type="button" class="rename" data-act="start-rename" data-sim="' + sim + '">改名</button></div>';
+}
+function renderAPlatform() {
+  const slot = state.openedSlot;
+  const rows = evidence(state.platform, slot);
+  const other = otherSlotCount(state.platform, slot);
+  let body = '<button type="button" class="back" data-act="back">‹ 返回账本</button><h1>' + esc(state.platform) + '</h1><p class="fine">自行前往「' + esc(state.platform) + '」处理账号。这里不登录、不注销、不发送短信。</p><p class="fine">' + esc(filterPhrase(slot)) + ' · ' + rows.length + ' 条</p>';
+  if (other) body += '<p class="fine">其他快照里还有 ' + other + ' 条。返回后把筛选改成「全部」就能看到。</p>';
+  body += '<p class="fine">' + esc(secureNote()) + '</p>';
+  if (!smsOk()) return '<div class="page">' + body + smsWall() + '</div>';
+  if (!rows.length) body += '<p class="empty">当前没有可展示的短信。</p>';
+  body += rows.map((m) => '<button type="button" class="row" data-act="open-message" data-id="' + m.id + '"><b>' + esc(m.sender) + '</b><span class="meta">' + esc(m.at) + '</span><span class="meta">' + esc(m.slotText) + ' · ' + esc(m.simText) + '</span><span></span></button>').join('');
+  return '<div class="page">' + body + '</div>';
+}
+function renderAMessage() {
+  const m = findMessage(state.messageId);
+  if (!m) return '<div class="page"><button type="button" class="back" data-act="back">‹ 返回</button><p>找不到这条短信。</p></div>';
+  let inner = '<button type="button" class="back" data-act="back">‹ 返回</button><p class="kicker">短信详情</p><p class="fine">' + esc(secureNote()) + '</p>';
+  if (!smsOk()) return '<div class="page">' + inner + smsWall() + '</div>';
+  inner += '<p class="body">' + esc(m.body) + '</p>' + metaList(m);
+  return '<div class="page">' + inner + '</div>';
+}
+
+function renderB() {
+  if (state.screen === 'platform') return renderBPlatform();
+  if (state.screen === 'message') return renderBMessage();
+  if (state.screen === 'pending') return renderPending('b');
+  if (state.screen === 'label') return renderLabelDetail('b');
+  if (state.screen === 'create') return renderCreate('b');
+  return renderBHome();
+}
+function bIndex() {
+  const items = [['sec-slot1', '01 卡槽 1'], ['sec-slot2', '02 卡槽 2'], ['sec-unknown', '03 未知'], ['sec-pending', '04 待确认 ' + pendingRaw('').length], ['sec-labels', '05 名称'], ['sec-colophon', '06 编制']];
+  return '<div class="index">' + items.map((it) => '<button type="button" data-act="jump" data-section="' + it[0] + '">' + it[1] + '</button>').join('') + '</div>';
+}
+function bEntries(slot) {
+  const rows = summaries({ slot, query: state.platformQuery });
+  if (!rows.length) {
+    if (state.platformQuery.trim()) return '';
+    const copy = state.perm === 'phone' && slot !== 'unknown' ? '未授权电话状态，这一章没有可区分的卡槽。' : '此卡槽暂无已识别平台。';
+    return '<section class="section" id="' + slotId(slot) + '"><p class="kicker">' + esc(filterPhrase(slot)) + '</p><h2>' + esc(SLOT_LABEL[slot] || '卡槽') + '</h2><p class="empty">' + copy + '</p></section>';
+  }
+  const entries = rows.map((r) => {
+    const other = otherSlotCount(r.name, slot);
+    const cross = other ? ' · 其他章节还有 ' + other + ' 条' : '';
+    return '<button type="button" class="entry" data-act="open-platform" data-name="' + esc(r.name) + '" data-slot="' + slot + '"><b>' + esc(r.name) + '</b><span>' + r.count + ' 条验证码 · 最近 ' + esc(r.latest) + cross + handledMark(r.name) + '</span></button>';
+  }).join('');
+  return '<section class="section" id="' + slotId(slot) + '"><p class="kicker">' + esc(filterPhrase(slot)) + '</p><h2>' + esc(SLOT_LABEL[slot]) + '</h2>' + entries + '</section>';
+}
+function slotId(slot) {
+  return slot === 'slot1' ? 'sec-slot1' : slot === 'slot2' ? 'sec-slot2' : 'sec-unknown';
+}
+function renderBHome() {
+  const pending = pendingRaw('');
+  const labels = filteredLabels(state.labelQuery);
+  const pendingHtml = !smsOk()
+    ? smsWall()
+    : pending.length
+      ? pending.map((m) => '<button type="button" class="entry" data-act="open-pending" data-id="' + m.id + '"><b>' + esc(m.at) + ' · ' + esc(SLOT_LABEL[phoneOk() ? m.slot : 'unknown']) + '</b><span>' + esc(m.sender) + ' · 需要你裁定平台</span></button>').join('')
+      : '<p class="empty">目前没有需要确认的。</p>';
+  const exact = nameTaken(state.labelQuery);
+  const createRow = state.labelQuery.trim() && !exact ? '<button type="button" class="entry" data-act="quick-create"><b>创建「' + esc(state.labelQuery.trim()) + '」</b><span>作为新的平台名称</span></button>' : '';
+  const labelRows = labels.map((l) => '<button type="button" class="entry" data-act="open-label" data-id="' + l.id + '"><b>' + esc(l.name) + '</b><span>' + labelCount(l.name) + ' 条' + (l.aliases.length ? ' · 别名 ' + esc(l.aliases.join('、')) : '') + '</span></button>').join('');
+  return '<div class="mast"><p class="kicker">卷宗 001 · 只读 · 正文不离机</p><h1>刺猬选短信</h1><p class="lede">按扫描时的卡槽，整理每张卡收过验证码的平台。后面的注销要你自己做。</p><input class="search" data-bind="platformQuery" data-live="1" value="' + esc(state.platformQuery) + '" placeholder="在档案里找平台" aria-label="在档案里找平台"></div>'
+    + bIndex() + phoneBanner()
+    + bEntries('slot1') + bEntries('slot2') + bEntries('unknown')
+    + '<section class="section" id="sec-pending"><p class="kicker">04</p><h2>还不能确认</h2><p class="fine">发送者不是平台。确认过的才会进入本地学习。</p>' + pendingHtml + '</section>'
+    + '<section class="section" id="sec-labels"><p class="kicker">05</p><h2>名称</h2><input class="search" data-bind="labelQuery" data-live="1" value="' + esc(state.labelQuery) + '" placeholder="搜索或创建名称" aria-label="搜索或创建名称">' + createRow + labelRows + '<button type="button" class="textbtn" data-act="open-create">创建并合并已有名称</button></section>'
+    + '<section class="section" id="sec-colophon"><p class="kicker">06</p><h2>编制说明</h2>' + bScan() + renderPrivacy('b') + '</section>';
+}
+function bScan() {
+  const scan = scanModel();
+  return '<p><b>' + esc(scan.title) + '</b> · ' + scan.pct + '%</p><p class="fine">' + esc(scan.detail) + '</p><button type="button" class="btn solid" data-act="' + scan.action + '">' + esc(scan.actionLabel) + '</button>';
+}
+function renderBPlatform() {
+  const slot = state.openedSlot || 'all';
+  const rows = evidence(state.platform, slot);
+  let body = '<button type="button" class="back" data-act="back">返回卷宗</button><p class="kicker">' + esc(filterPhrase(slot)) + '</p><h1>' + esc(state.platform) + '</h1><p class="lede">自行前往该平台处理。本档案不提供注销。</p><p class="fine">' + rows.length + ' 条 · ' + esc(secureNote()) + '</p>';
+  const other = otherSlotCount(state.platform, slot);
+  if (other) body += '<p class="fine">其他章节还有 ' + other + ' 条。</p>';
+  if (!smsOk()) return '<div class="page">' + body + smsWall() + '</div>';
+  body += rows.map((m, i) => '<button type="button" class="entry" data-act="open-message" data-id="' + m.id + '"><b>' + String(i + 1).padStart(2, '0') + '  ' + esc(m.at) + '</b><span>' + esc(m.sender) + ' · ' + esc(m.slotText) + ' · ' + esc(m.simText) + '</span></button>').join('');
+  if (!rows.length) body += '<p class="empty">当前没有可展示的短信。</p>';
+  return '<div class="page">' + body + '</div>';
+}
+function renderBMessage() {
+  const m = findMessage(state.messageId);
+  if (!m) return '<div class="page"><button type="button" class="back" data-act="back">返回卷宗</button><p>找不到这条摘录。</p></div>';
+  let inner = '<button type="button" class="back" data-act="back">返回</button><p class="kicker">摘录 · ' + esc(m.id) + '</p><p class="fine">' + esc(secureNote()) + '</p>';
+  if (!smsOk()) return '<div class="page">' + inner + smsWall() + '</div>';
+  return '<div class="page">' + inner + '<p class="excerpt">' + esc(m.body) + '</p>' + metaList(m) + '</div>';
+}
+
+function renderC() {
+  const page = state.screen === 'pending' ? renderPending('c')
+    : state.screen === 'checklist' ? renderChecklist()
+    : state.screen === 'labels' ? renderLabels('c')
+    : state.screen === 'label' ? renderLabelDetail('c')
+    : state.screen === 'create' ? renderCreate('c')
+    : state.screen === 'settings' ? renderSettings('c')
+    : renderCHome();
+  return page;
+}
+function renderCHome() {
+  const n = pendingRaw('').length;
+  const platforms = summaries({ slot: 'all' });
+  const scan = scanModel();
+  const cta = state.perm === 'sms' ? '先恢复短信权限' : (n ? '处理下一条' : '去看清单');
+  const act = state.perm === 'sms' ? 'grant-sms' : (n ? 'open-pending' : 'open-checklist');
+  return '<div class="home"><div class="word">刺猬 · 只读 · 不发送</div><button type="button" class="fine" data-act="open-settings">隐私</button>'
+    + '<p class="hero-num num">' + n + '</p><h1>' + (n ? '条等你确认平台' : '待确认已清空') + '</h1>'
+    + '<p class="fine">' + (n ? '对不上的先看正文，再选定平台。发送者不能直接当平台。' : '之后新的不确定短信会回到这里。') + '</p>'
+    + phoneBanner()
+    + '<button type="button" class="primary" data-act="' + act + '">' + cta + '</button>'
+    + '<button type="button" class="stack-link" data-act="open-checklist"><b class="num">' + platforms.length + ' 个平台可以自己去处理</b><span class="fine">打开清单。勾选只表示你处理过，不会替你注销。</span></button>'
+    + '<div class="scanjob"><div class="meter"><i style="width:' + scan.pct + '%"></i></div><p><b>' + esc(scan.title) + '</b> <span class="num">' + scan.pct + '%</span></p><p class="fine">' + esc(scan.detail) + '</p><button type="button" class="fine" data-act="' + scan.action + '">' + esc(scan.actionLabel) + '</button></div></div>';
+}
+function renderChecklist() {
+  const rows = summaries({ slot: state.slot, query: state.platformQuery }).slice().sort((a, b) => (state.handled[a.name] ? 1 : 0) - (state.handled[b.name] ? 1 : 0) || b.count - a.count);
+  const options = [['all', '全部'], ['slot1', '卡槽 1'], ['slot2', '卡槽 2'], ['unknown', '未知卡槽']].map((c) => '<option value="' + c[0] + '"' + (state.slot === c[0] ? ' selected' : '') + '>' + c[1] + '</option>').join('');
+  const done = rows.filter((r) => state.handled[r.name]).length;
+  let list = '';
+  if (!rows.length) {
+    list = '<p class="empty">' + (state.platformQuery.trim() ? '没有匹配的平台。' : '此卡槽暂无已识别平台。') + '</p>';
+    if (!state.platformQuery.trim() && state.slot !== 'all') list += '<button type="button" data-act="set-slot" data-slot="all">查看全部</button>';
+  } else {
+    list = rows.map((r) => '<div class="checkline' + (state.handled[r.name] ? ' done' : '') + '"><button type="button" class="box' + (state.handled[r.name] ? ' on' : '') + '" data-act="toggle-handled" data-name="' + esc(r.name) + '" aria-pressed="' + (state.handled[r.name] ? 'true' : 'false') + '" aria-label="标记' + esc(r.name) + '已自行处理"></button><button type="button" class="checkmain" data-act="open-platform" data-name="' + esc(r.name) + '"><b>' + esc(r.name) + '</b><span class="fine num">' + r.count + ' 条 · 最近 ' + esc(r.latest) + (state.handled[r.name] ? ' · 已自行处理' : '') + '</span></button></div>').join('');
+  }
+  return '<div class="page"><button type="button" class="back" data-act="back">‹ 返回</button><h1>处理清单</h1><p class="fine">勾选只记在这台手机上，表示你自己处理过。不会登录，也不会注销。</p><p class="fine">按扫描时的卡槽快照筛选，不是按这张卡现在插在哪。' + done + ' / ' + rows.length + ' 在当前筛选里标过。</p>'
+    + phoneBanner()
+    + (smsOk() ? '' : '<p class="fine">正文先隐藏着。平台名称来自本地索引。</p>')
+    + '<label class="fine">卡槽快照<select id="slotPick" class="field" aria-label="卡槽快照">' + options + '</select></label>'
+    + '<input class="search" data-bind="platformQuery" data-live="1" value="' + esc(state.platformQuery) + '" placeholder="搜索平台" aria-label="搜索平台">'
+    + list
+    + '<button type="button" class="stack-link" data-act="open-labels"><b>整理重复名称</b><span class="fine">合并后历史按主名称聚合，旧名留作别名。</span></button></div>';
+}
+function renderSheet() {
+  if (state.variant !== 'C' || !state.sheet) return '';
+  if (state.sheet.kind === 'message') {
+    const m = findMessage(state.messageId);
+    let inner = '<button type="button" class="back" data-act="sheet-back">‹ 返回证据</button>';
+    if (!m) inner += '<p>找不到这条短信。</p>';
+    else if (!smsOk()) inner += '<p class="fine">' + esc(secureNote()) + '</p>' + smsWall();
+    else inner += '<p class="fine">' + esc(secureNote()) + '</p><p class="body">' + esc(m.body) + '</p>' + metaList(m);
+    return '<button type="button" class="scrim" data-act="close-sheet" aria-label="关闭"></button><div class="sheet"><div class="grab"></div>' + inner + '</div>';
+  }
+  const slot = state.openedSlot || state.slot;
+  const rows = evidence(state.platform, slot);
+  let inner = '<button type="button" class="back" data-act="close-sheet">关闭</button><h2>' + esc(state.platform) + '</h2><p class="fine">自行前往该平台处理。' + esc(filterPhrase(slot)) + ' · ' + rows.length + ' 条。</p><p class="fine">' + esc(secureNote()) + '</p>';
+  if (!smsOk()) inner += smsWall();
+  else if (!rows.length) inner += '<p class="empty">当前没有可展示的短信。</p>';
+  else inner += rows.map((m) => '<button type="button" class="choice" data-act="open-message" data-id="' + m.id + '"><b>' + esc(m.at) + '</b><span class="fine">' + esc(m.sender) + ' · ' + esc(m.slotText) + '</span></button>').join('');
+  return '<button type="button" class="scrim" data-act="close-sheet" aria-label="关闭"></button><div class="sheet"><div class="grab"></div>' + inner + '</div>';
+}
+
+function renderPending(which) {
+  const all = pendingRaw('');
+  const scoped = pendingRaw(state.pendingSim);
+  const currentRaw = scoped.find((m) => m.id === state.pendingId) || scoped[0] || null;
+  const current = currentRaw ? present(currentRaw) : null;
+  const q = state.pendingQuery.trim();
+  const labels = filteredLabels(q);
+  const backLabel = which === 'b' ? '返回卷宗' : which === 'c' ? '‹ 返回' : '‹ 返回账本';
+  let head = '<button type="button" class="back" data-act="back">' + backLabel + '</button>';
+  if (!current) {
+    const other = all.length - scoped.length;
+    head += '<h1>没有待确认的了</h1><p class="fine">新的不确定短信会回到这里。</p>';
+    if (other > 0) head += '<button type="button" class="btn solid" data-act="scope-pending" data-sim="">还有 ' + other + ' 条在其他卡上</button>';
+    return wrapPending(which, head);
+  }
+  head += '<p class="kicker">还剩 ' + scoped.length + ' 条</p>';
+  if (which === 'c') head += '<h1>这是什么平台？</h1>';
+  else head += '<h2>这是什么平台？</h2>';
+  head += '<p class="note">' + esc(current.hint) + '</p><p class="fine">' + esc(secureNote()) + '</p>';
+  if (!smsOk()) return wrapPending(which, head + smsWall());
+  const bodyClass = which === 'b' ? 'quote' : 'body';
+  head += '<p class="' + bodyClass + '">' + esc(current.body) + '</p><p class="fine">' + esc(current.sender) + ' · ' + esc(current.at) + ' · ' + esc(current.slotText) + ' · ' + esc(current.simText) + '</p>';
+  head += '<input class="search" data-bind="pendingQuery" data-live="1" value="' + esc(state.pendingQuery) + '" placeholder="搜索已有平台" aria-label="搜索已有平台">';
+  if (!labels.length) head += '<p class="empty">没有匹配的平台。</p>';
+  if (which === 'b') {
+    head += '<ol>' + labels.map((l) => '<li><button type="button" data-act="select-label" data-name="' + esc(l.name) + '" class="' + (state.pendingSelected === l.name && !state.pendingCreate ? 'mark' : '') + '">' + esc(l.name) + (l.aliases.length ? '（' + esc(l.aliases.join('、')) + '）' : '') + '</button></li>').join('') + '</ol>';
+  } else {
+    head += labels.map((l) => '<button type="button" class="choice' + (state.pendingSelected === l.name && !state.pendingCreate ? ' on' : '') + '" data-act="select-label" data-name="' + esc(l.name) + '">' + (state.pendingSelected === l.name && !state.pendingCreate ? '✓ ' : '') + esc(l.name) + (l.aliases.length ? ' · ' + esc(l.aliases.join('、')) : '') + '</button>').join('');
+  }
+  if (q && !nameTaken(q)) {
+    const on = state.pendingCreate && state.pendingSelected === q;
+    head += '<button type="button" class="choice' + (on ? ' on' : '') + '" data-act="select-label" data-name="' + esc(q) + '" data-create="1">' + (on ? '✓ ' : '') + '创建「' + esc(q) + '」并用于这条</button>';
+  }
+  const confirm = state.pendingSelected
+    ? '<div class="confirmbar"><button type="button" class="btn solid" data-act="confirm-pending">标为「' + esc(state.pendingSelected) + '」并让本机学习</button></div>'
+    : '<div class="confirmbar"><p class="fine">先选一个平台。选中后只确认一次。</p></div>';
+  if (state.pendingSim && all.length - scoped.length > 0) {
+    head += '<p class="fine">其他卡还有 ' + (all.length - scoped.length) + ' 条。<button type="button" data-act="scope-pending" data-sim="">改看全部</button></p>';
+  }
+  return wrapPending(which, head + confirm);
+}
+function wrapPending(which, inner) {
+  if (which === 'c') return '<div class="page">' + inner + '</div>';
+  if (which === 'b') return '<div class="page">' + inner + '</div>';
+  return '<div class="page">' + inner + '</div>';
+}
+
+function renderLabels(which) {
+  const labels = filteredLabels(state.labelQuery).slice().sort((a, b) => labelCount(b.name) - labelCount(a.name));
+  const exact = nameTaken(state.labelQuery);
+  const createRow = state.labelQuery.trim() && !exact ? '<button type="button" class="' + (which === 'c' ? 'choice' : 'row') + '" data-act="quick-create">创建「' + esc(state.labelQuery.trim()) + '」</button>' : '';
+  const rows = labels.map((l) => {
+    const alias = l.aliases.length ? '别名 ' + l.aliases.join('、') : '没有别名';
+    if (which === 'c') return '<button type="button" class="choice" data-act="open-label" data-id="' + l.id + '"><b>' + esc(l.name) + '</b><span class="fine">' + labelCount(l.name) + ' 条 · ' + esc(alias) + '</span></button>';
+    return '<button type="button" class="row" data-act="open-label" data-id="' + l.id + '"><b>' + esc(l.name) + '</b><span class="num">' + labelCount(l.name) + '</span><span class="meta">' + esc(alias) + '</span><span></span></button>';
+  }).join('');
+  return '<div class="page"><button type="button" class="back" data-act="back">‹ 返回</button><h1>名称</h1><p class="fine">一个平台一个主名称。合并后旧名变成别名，历史立刻按主名称聚合。</p><input class="search" data-bind="labelQuery" data-live="1" value="' + esc(state.labelQuery) + '" placeholder="搜索名称" aria-label="搜索名称">' + createRow + rows + '<button type="button" class="btn solid" data-act="open-create">创建并合并</button></div>';
+}
+function renderLabelDetail(which) {
+  const label = state.labels.find((l) => l.id === state.labelId);
+  if (!label) return '<div class="page"><button type="button" class="back" data-act="back">‹ 返回</button><p>这个名称不在了。</p></div>';
+  const others = state.labels.filter((l) => l.id !== label.id);
+  const merge = others.length
+    ? others.map((l) => '<button type="button" class="choice" data-act="merge-into" data-id="' + l.id + '">合并到「' + esc(l.name) + '」</button>').join('')
+    : '<p class="empty">没有其他名称可合并。</p>';
+  return '<div class="page"><button type="button" class="back" data-act="back">‹ 返回</button><h1>' + esc(label.name) + '</h1><p class="fine">' + labelCount(label.name) + ' 条验证码</p><p class="fine">' + (label.aliases.length ? '别名：' + esc(label.aliases.join('、')) : '没有别名') + '</p>'
+    + '<form data-act="rename-label"><input class="field" data-bind="renameValue" value="' + esc(state.renameValue) + '" aria-label="新名称"><div class="form-row"><button type="submit" class="btn solid">改名</button></div></form>'
+    + '<h2 style="margin-top:18px">合并</h2><p class="fine">旧名会留下来当别名。已经学过的不会遗忘。</p>' + merge
+    + '<button type="button" class="choice" data-act="explain-split">拆分做不到自动完成</button></div>';
+}
+function renderCreate(which) {
+  const q = state.labelQuery.trim().toLowerCase();
+  const choices = state.labels.filter((l) => !q || l.name.toLowerCase().indexOf(q) >= 0 || l.aliases.some((a) => a.toLowerCase().indexOf(q) >= 0));
+  const picks = choices.map((l) => {
+    const on = state.mergeIds.indexOf(l.id) >= 0;
+    return '<button type="button" class="choice' + (on ? ' on' : '') + '" data-act="toggle-merge" data-id="' + l.id + '">' + (on ? '✓ ' : '') + esc(l.name) + '</button>';
+  }).join('');
+  const selected = state.labels.filter((l) => state.mergeIds.indexOf(l.id) >= 0).map((l) => l.name);
+  return '<div class="page"><button type="button" class="back" data-act="back">‹ 返回</button><h1>创建名称</h1><form data-act="submit-create"><input class="field" data-bind="newLabelName" value="' + esc(state.newLabelName) + '" placeholder="新的平台名称" aria-label="新的平台名称"><p class="fine">可选：把已有名称并进来，它们会变成别名。</p><input class="search" data-bind="labelQuery" data-live="1" value="' + esc(state.labelQuery) + '" placeholder="搜索要合并的名称" aria-label="搜索要合并的名称">' + picks + '<p class="fine">' + (selected.length ? '将合并：' + esc(selected.join('、')) : '不合并现有名称') + '</p><button type="submit" class="btn solid">创建</button></form></div>';
+}
+function renderSettings(which) {
+  return '<div class="page"><button type="button" class="back" data-act="back">‹ 返回</button><h1>隐私</h1>' + renderPrivacy(which) + '</div>';
+}
+function renderPrivacy(which) {
+  let html = '<h2 style="margin-top:16px">防截屏</h2>';
+  html += state.secure
+    ? '<p class="fine">短信详情、证据和待确认默认禁止截屏，也不进最近任务预览。</p><button type="button" data-act="ask-secure">关闭防截屏</button>'
+    : '<p class="fine">已关闭。系统或其他应用可能捕获短信详情。</p><button type="button" class="btn solid" data-act="enable-secure">开启防截屏</button>';
+  if (state.secureAsk) {
+    html += '<p class="note">关闭后，发送者和正文可能出现在截图、录屏或最近任务预览中。</p><div class="form-row"><button type="button" class="danger" data-act="confirm-secure">理解风险并关闭</button><button type="button" data-act="cancel-secure">取消</button></div>';
+  }
+  html += '<h2 style="margin-top:18px">清除本地数据</h2><p class="fine">会清索引、扫描进度、模型和本机设置。不会删除系统短信。原型里不会真的清空样本。</p>';
+  if (state.clearStep === 0) html += '<button type="button" class="danger" data-act="clear-ask">清除全部本地数据</button>';
+  if (state.clearStep === 1) html += '<p class="note">第一次确认：索引、扫描状态、模型和本地设置将不可恢复。</p><div class="form-row"><button type="button" class="danger" data-act="clear-next">继续确认</button><button type="button" data-act="clear-cancel">取消</button></div>';
+  if (state.clearStep === 2) html += '<p class="note">第二次确认：系统短信不会被删除。</p><div class="form-row"><button type="button" class="danger" data-act="clear-do">确认清除</button><button type="button" data-act="clear-cancel">取消</button></div>';
+  html += '<p class="fine" style="margin-top:16px">默认不联网。正文、验证码和原始发送者不写入本地数据库。</p>';
+  return html;
+}
+
+function shell(inner, extra) {
+  const toast = state.notice ? '<div class="toast" role="status">' + esc(state.notice) + '</div>' : '';
+  return '<div class="screen">' + toast + inner + '</div>' + (extra || '');
+}
+function phoneHTML() {
+  const inner = state.variant === 'A' ? renderA() : state.variant === 'B' ? renderB() : renderC();
+  const extra = state.variant === 'C' ? renderSheet() : '';
+  return shell(inner, extra);
+}
+function optionList(pairs, current) {
+  return pairs.map((p) => '<option value="' + p[0] + '"' + (current === p[0] ? ' selected' : '') + '>' + p[1] + '</option>').join('');
+}
+function stateHTML() {
+  const snap = {
+    方案: state.variant + ' ' + META[state.variant].name,
+    页面: state.screen + (state.sheet ? '/' + state.sheet.kind : ''),
+    扫描: state.scan,
+    权限: state.perm,
+    筛选: state.slot,
+    选中的卡: state.simNames[state.sim],
+    待确认: pendingRaw('').map((m) => m.id),
+    已自行处理: Object.keys(state.handled).filter((k) => state.handled[k]),
+    SIM名称: state.simNames,
+    打开的平台: state.platform || null,
+    证据筛选: state.openedSlot,
+    最近动作: state.lastAction,
+  };
+  return '<h2>不是界面的一部分</h2><p>' + esc(META[state.variant].note) + '</p><label>扫描<select id="scanPick">' + optionList([['running', '扫描中'], ['paused', '已暂停'], ['battery', '等待电量'], ['thermal', '等待降温'], ['failed', '扫描失败'], ['done', '已完成']], state.scan) + '</select></label><label>权限<select id="permPick">' + optionList([['ok', '权限正常'], ['sms', '没有短信权限'], ['phone', '没有电话状态权限']], state.perm) + '</select></label><pre>' + esc(JSON.stringify(snap, null, 2)) + '</pre>';
+}
+
+function render(opts) {
+  opts = opts || {};
+  try {
+    const prev = document.querySelector('.screen');
+    const top = prev ? prev.scrollTop : 0;
+    const device = document.getElementById('device');
+    device.className = 'device variant-' + state.variant.toLowerCase();
+    device.innerHTML = phoneHTML();
+    document.getElementById('state').innerHTML = stateHTML();
+    document.getElementById('variantLabel').textContent = state.variant + ' — ' + META[state.variant].name;
+    document.getElementById('variantThesis').textContent = META[state.variant].short;
+    const url = new URL(location.href);
+    url.searchParams.set('variant', state.variant);
+    url.searchParams.set('scan', state.scan);
+    url.searchParams.set('perm', state.perm);
+    history.replaceState(null, '', url);
+    if (opts.bind) {
+      const el = device.querySelector('[data-bind="' + opts.bind + '"]');
+      if (el) {
+        el.focus();
+        const caret = opts.caret == null ? el.value.length : opts.caret;
+        try { el.setSelectionRange(caret, caret); } catch (err) { /* number inputs */ }
+      }
+    }
+    const screen = device.querySelector('.screen');
+    if (opts.keepScroll && screen) screen.scrollTop = top;
+    if (state.focusSection && screen) {
+      const target = document.getElementById(state.focusSection);
+      if (target) screen.scrollTop = Math.max(0, target.offsetTop - 88);
+      state.focusSection = '';
+    }
+  } catch (err) {
+    document.getElementById('device').innerHTML = '<pre class="screen">' + esc(err && err.stack || err) + '</pre>';
+  }
+}
+
+function act(name, dataset) {
+  dataset = dataset || {};
+  const screenBefore = state.screen;
+  state.notice = '';
+  if (name === 'set-slot') {
+    state.slot = dataset.slot;
+    state.sheet = null;
+    state.lastAction = '筛选改为 ' + dataset.slot;
+  } else if (name === 'select-sim') {
+    state.sim = dataset.sim;
+    state.lastAction = '选中 ' + state.simNames[dataset.sim];
+  } else if (name === 'start-rename') {
+    state.renameSim = dataset.sim;
+    state.renameValue = state.simNames[dataset.sim];
+    state.lastAction = '开始改 SIM 名称';
+  } else if (name === 'cancel-rename') {
+    state.renameSim = '';
+  } else if (name === 'commit-rename') {
+    const next = state.renameValue.trim();
+    if (!next) state.notice = '名称不能为空';
+    else {
+      state.simNames[dataset.sim] = next;
+      state.renameSim = '';
+      state.lastAction = 'SIM 集合改名为 ' + next;
+      state.notice = '这张卡现在叫「' + next + '」。换到别的方案里也会用这个名字。';
+    }
+  } else if (name === 'pause') {
+    state.scan = 'paused';
+    state.lastAction = '暂停扫描';
+  } else if (name === 'resume' || name === 'recheck') {
+    state.scan = 'running';
+    state.lastAction = name === 'recheck' ? '重新检查条件，原型里直接继续' : '继续扫描';
+  } else if (name === 'restart') {
+    state.scan = 'running';
+    state.notice = '原型不会清空已有索引，只把状态放回扫描中。';
+    state.lastAction = '要求重新完整扫描';
+  } else if (name === 'grant-sms') {
+    state.perm = 'ok';
+    state.notice = '短信权限已恢复。这只发生在原型里。';
+    state.lastAction = '恢复短信权限';
+  } else if (name === 'grant-phone') {
+    state.perm = 'ok';
+    state.notice = '电话状态权限已恢复。卡槽按样本数据重新显示。';
+    state.lastAction = '恢复电话状态权限';
+  } else if (name === 'open-platform') {
+    state.platform = dataset.name;
+    state.openedSlot = dataset.slot || state.slot;
+    if (state.variant === 'C') {
+      if (state.screen !== 'checklist') go('checklist');
+      state.sheet = { kind: 'evidence' };
+      state.lastAction = '打开证据层 ' + dataset.name;
+    } else {
+      go('platform');
+      state.lastAction = '打开平台 ' + dataset.name;
+    }
+  } else if (name === 'open-message') {
+    state.messageId = dataset.id;
+    if (state.sheet) {
+      state.sheet = { kind: 'message' };
+      state.lastAction = '在层内阅读 ' + dataset.id;
+    } else {
+      go('message');
+      state.lastAction = '打开短信 ' + dataset.id;
+    }
+  } else if (name === 'close-sheet') {
+    state.sheet = null;
+    state.lastAction = '关闭证据层';
+  } else if (name === 'sheet-back') {
+    state.sheet = { kind: 'evidence' };
+    state.lastAction = '返回证据层';
+  } else if (name === 'open-pending') {
+    state.pendingSim = dataset.sim || '';
+    if (dataset.id) state.pendingId = dataset.id;
+    else state.pendingId = (pendingRaw(state.pendingSim)[0] || {}).id || '';
+    state.pendingQuery = '';
+    state.pendingSelected = '';
+    state.pendingCreate = false;
+    go('pending');
+    state.lastAction = '打开待确认';
+  } else if (name === 'scope-pending') {
+    state.pendingSim = dataset.sim || '';
+    state.pendingSelected = '';
+    state.pendingQuery = '';
+    state.pendingId = (pendingRaw(state.pendingSim)[0] || {}).id || '';
+    state.lastAction = '待确认范围 ' + (state.pendingSim || '全部');
+  } else if (name === 'select-label') {
+    state.pendingSelected = dataset.name;
+    state.pendingCreate = dataset.create === '1';
+    state.lastAction = '选择标注 ' + dataset.name;
+  } else if (name === 'confirm-pending') {
+    const raw = MESSAGES.find((m) => m.id === state.pendingId) || pendingRaw(state.pendingSim)[0];
+    if (!raw || !state.pendingSelected) state.notice = '先选择一个平台。';
+    else if (state.pendingCreate && nameTaken(state.pendingSelected)) state.notice = '已有同名标签，请直接选它。';
+    else {
+      if (state.pendingCreate) state.labels.push(makeLabel(state.pendingSelected));
+      raw.platform = state.pendingSelected;
+      raw.pending = false;
+      raw.byUser = true;
+      const chosen = state.pendingSelected;
+      state.pendingSelected = '';
+      state.pendingCreate = false;
+      state.pendingQuery = '';
+      const rest = pendingRaw(state.pendingSim);
+      state.pendingId = rest[0] ? rest[0].id : '';
+      state.notice = '已把这条标为「' + chosen + '」。只影响这条和以后的预测，不改其他历史。';
+      state.lastAction = '确认标注 ' + chosen;
+    }
+  } else if (name === 'open-labels') {
+    state.labelQuery = '';
+    go('labels');
+    state.lastAction = '打开名称';
+  } else if (name === 'open-label') {
+    const label = state.labels.find((l) => l.id === dataset.id);
+    state.labelId = dataset.id;
+    state.renameValue = label ? label.name : '';
+    go('label');
+    state.lastAction = '打开名称 ' + (label ? label.name : dataset.id);
+  } else if (name === 'open-create') {
+    state.newLabelName = '';
+    state.mergeIds = [];
+    state.labelQuery = '';
+    go('create');
+    state.lastAction = '打开创建名称';
+  } else if (name === 'quick-create') {
+    state.newLabelName = state.labelQuery.trim();
+    state.mergeIds = [];
+    go('create');
+    state.lastAction = '用搜索词创建名称';
+  } else if (name === 'toggle-merge') {
+    if (state.mergeIds.indexOf(dataset.id) >= 0) state.mergeIds = state.mergeIds.filter((id) => id !== dataset.id);
+    else state.mergeIds.push(dataset.id);
+    state.lastAction = '调整合并选择';
+  } else if (name === 'submit-create') {
+    const clean = state.newLabelName.trim();
+    if (!clean) state.notice = '标签名称不能为空';
+    else if (nameTaken(clean)) state.notice = '已存在同名标签，请选择已有标签。';
+    else {
+      const label = makeLabel(clean);
+      state.mergeIds.forEach((id) => {
+        const old = state.labels.find((l) => l.id === id);
+        if (!old) return;
+        label.aliases.push(old.name);
+        old.aliases.forEach((a) => label.aliases.push(a));
+        MESSAGES.forEach((m) => { if (m.platform === old.name) m.platform = clean; });
+        if (state.handled[old.name]) state.handled[clean] = true;
+      });
+      state.labels = state.labels.filter((l) => state.mergeIds.indexOf(l.id) < 0);
+      state.labels.push(label);
+      const merged = label.aliases.slice();
+      state.mergeIds = [];
+      state.newLabelName = '';
+      state.labelQuery = '';
+      state.notice = merged.length ? '已创建「' + clean + '」，并合并了 ' + merged.join('、') + '。' : '已创建「' + clean + '」。';
+      state.lastAction = '创建名称 ' + clean;
+      back();
+    }
+  } else if (name === 'rename-label') {
+    const label = state.labels.find((l) => l.id === state.labelId);
+    const next = state.renameValue.trim();
+    if (!label) state.notice = '这个名称不在了。';
+    else if (!next) state.notice = '名称不能为空';
+    else if (state.labels.some((l) => l.id !== label.id && (l.name.toLowerCase() === next.toLowerCase()))) state.notice = '已存在同名标签。';
+    else {
+      const old = label.name;
+      label.name = next;
+      MESSAGES.forEach((m) => { if (m.platform === old) m.platform = next; });
+      if (state.handled[old]) { state.handled[next] = true; delete state.handled[old]; }
+      state.notice = '已把「' + old + '」改名为「' + next + '」。';
+      state.lastAction = '重命名 ' + old + ' -> ' + next;
+    }
+  } else if (name === 'merge-into') {
+    const source = state.labels.find((l) => l.id === state.labelId);
+    const target = state.labels.find((l) => l.id === dataset.id);
+    if (source && target && source.id !== target.id) {
+      target.aliases.push(source.name);
+      source.aliases.forEach((a) => { if (target.aliases.indexOf(a) < 0) target.aliases.push(a); });
+      MESSAGES.forEach((m) => { if (m.platform === source.name) m.platform = target.name; });
+      if (state.handled[source.name]) state.handled[target.name] = true;
+      state.labels = state.labels.filter((l) => l.id !== source.id);
+      state.labelId = target.id;
+      state.renameValue = target.name;
+      state.notice = '已合并到「' + target.name + '」。旧名保留为别名，历史按主名称聚合。';
+      state.lastAction = '合并到 ' + target.name;
+    }
+  } else if (name === 'explain-split') {
+    state.notice = '拆分不能自动完成，需要逐条重新标注。系统短信删掉之后只剩聚合参数的部分，没法精确拆开。';
+    state.lastAction = '查看拆分说明';
+  } else if (name === 'toggle-handled') {
+    state.handled[dataset.name] = !state.handled[dataset.name];
+    state.lastAction = (state.handled[dataset.name] ? '标为已自行处理 ' : '取消已处理 ') + dataset.name;
+  } else if (name === 'open-checklist') {
+    go('checklist');
+    state.lastAction = '打开处理清单';
+  } else if (name === 'open-settings') {
+    go('settings');
+    state.lastAction = '打开隐私';
+  } else if (name === 'ask-secure') {
+    state.secureAsk = true;
+  } else if (name === 'cancel-secure') {
+    state.secureAsk = false;
+  } else if (name === 'confirm-secure') {
+    state.secure = false;
+    state.secureAsk = false;
+    state.lastAction = '关闭防截屏';
+  } else if (name === 'enable-secure') {
+    state.secure = true;
+    state.lastAction = '开启防截屏';
+  } else if (name === 'clear-ask') {
+    state.clearStep = 1;
+  } else if (name === 'clear-next') {
+    state.clearStep = 2;
+  } else if (name === 'clear-cancel') {
+    state.clearStep = 0;
+  } else if (name === 'clear-do') {
+    state.clearStep = 0;
+    state.notice = '原型没有删除任何数据。真机上这一步会清索引、扫描状态和模型，不会删除系统短信。';
+    state.lastAction = '二次确认清除（未执行）';
+  } else if (name === 'jump') {
+    state.screen = 'home';
+    state.stack = [];
+    state.focusSection = dataset.section;
+    state.lastAction = '跳到 ' + dataset.section;
+  } else if (name === 'back') {
+    back();
+    state.lastAction = '返回';
+  } else {
+    state.lastAction = name;
+  }
+  const moved = state.screen !== screenBefore || !!state.focusSection || name === 'confirm-pending';
+  render({ keepScroll: !moved });
+}
+
+function cycle(delta) {
+  const keys = ['A', 'B', 'C'];
+  const i = keys.indexOf(state.variant);
+  state.variant = keys[(i + delta + keys.length) % keys.length];
+  state.screen = 'home';
+  state.stack = [];
+  state.sheet = null;
+  state.renameSim = null;
+  state.notice = '';
+  if (state.variant === 'B' && state.slot !== 'all') {
+    state.focusSection = state.slot === 'slot2' ? 'sec-slot2' : state.slot === 'unknown' ? 'sec-unknown' : 'sec-slot1';
+  } else state.focusSection = '';
+  state.lastAction = '切换到方案 ' + state.variant;
+  render();
+}
+
+const stage = document.getElementById('stage');
+stage.addEventListener('click', (e) => {
+  if (e.target.closest('input, textarea, select')) return;
+  const el = e.target.closest('[data-act]');
+  if (!el || !stage.contains(el)) return;
+  act(el.dataset.act, el.dataset);
+});
+stage.addEventListener('submit', (e) => {
+  if (!(e.target instanceof HTMLFormElement) || !e.target.dataset.act) return;
+  e.preventDefault();
+  act(e.target.dataset.act, e.target.dataset);
+});
+stage.addEventListener('input', (e) => {
+  const key = e.target.dataset.bind;
+  if (!key) return;
+  state[key] = e.target.value;
+  if (e.isComposing || e.target.dataset.live !== '1') return;
+  render({ keepScroll: true, bind: key, caret: e.target.selectionStart });
+});
+stage.addEventListener('compositionend', (e) => {
+  const key = e.target.dataset.bind;
+  if (!key) return;
+  state[key] = e.target.value;
+  if (e.target.dataset.live === '1') render({ keepScroll: true, bind: key, caret: e.target.selectionStart });
+});
+stage.addEventListener('change', (e) => {
+  if (e.target.id === 'scanPick') { state.scan = e.target.value; state.lastAction = '原型场景 扫描=' + state.scan; render(); }
+  if (e.target.id === 'permPick') { state.perm = e.target.value; state.lastAction = '原型场景 权限=' + state.perm; render(); }
+  if (e.target.id === 'slotPick') { state.slot = e.target.value; state.sheet = null; state.lastAction = '筛选 ' + state.slot; render(); }
+});
+document.getElementById('prev').onclick = () => cycle(-1);
+document.getElementById('next').onclick = () => cycle(1);
+addEventListener('keydown', (e) => {
+  const t = e.target;
+  if (t && t.closest && t.closest('input, textarea, select, [contenteditable="true"]')) return;
+  if (e.key === 'ArrowLeft') cycle(-1);
+  if (e.key === 'ArrowRight') cycle(1);
+});
+render();
+  </script>
+</body>
+</html>
