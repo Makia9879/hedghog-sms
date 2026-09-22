@@ -41,6 +41,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.makia.hedgehogsms.export.ExportScreen
 import com.makia.hedgehogsms.data.SlotResolver
 import com.makia.hedgehogsms.data.SmsRecord
 import com.makia.hedgehogsms.data.SmsPermissionUnavailableException
@@ -159,9 +160,7 @@ private fun HedgehogApp(container: AppContainer) {
                     name?.let(permissionLauncher::launch)
                 }
             }
-        } else Inbox(container, permissions, Modifier.padding(padding), remember(container) { AndroidLocalDataClearer(context, container) }) {
-            permissions = permissions.reduce(PermissionEvent.Refreshed(false, permissions.readPhoneState, permissions.receiveSms))
-        }
+        } else ExportScreen(Modifier.padding(padding))
     }
 }
 
@@ -169,13 +168,13 @@ private fun HedgehogApp(container: AppContainer) {
 private fun Onboarding(state: PermissionSnapshot, modifier: Modifier, onContinue: () -> Unit) {
     Column(modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Text("刺猬选短信", style = MaterialTheme.typography.headlineMedium)
-        Text("短信不搬家，只帮你归类")
-        Text("正文始终留在系统信箱。应用只读短信，并且默认不联网。")
+        Text("把本机短信导出成压缩包，保存在手机里。")
+        Text("不发送、不删除、不修改系统短信。")
         Text(when (state.nextStep) {
             PermissionStep.EXPLANATION -> "先了解权限用途，再由你逐项授权。"
-            PermissionStep.READ_SMS -> "读取短信：用于显示真实短信。拒绝后不会读取或扫描。"
-            PermissionStep.READ_PHONE_STATE -> "电话状态：仅用于把订阅映射到卡槽。拒绝后显示未知卡槽。"
-            PermissionStep.RECEIVE_SMS -> "接收通知：用于及时发现新短信。拒绝后下次打开时补齐。"
+            PermissionStep.READ_SMS -> "读取短信：用于导出短信正文。拒绝后不能导出。"
+            PermissionStep.READ_PHONE_STATE -> "电话状态：用于把短信分到卡槽。拒绝后都归入未知卡槽。"
+            PermissionStep.RECEIVE_SMS -> "接收通知：导出本身不需要。拒绝后仍可导出已有短信。"
             PermissionStep.COMPLETE -> if (!state.readSms) "短信读取权限不可用，请在系统设置中重新授权。" else "引导完成"
         })
         if (state.nextStep != PermissionStep.COMPLETE || !state.readSms) {
