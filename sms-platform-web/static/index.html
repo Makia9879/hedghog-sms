@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>卡槽平台</title>
+  <style>
+    :root { color-scheme: light; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: #f3efe6;
+      color: #1d1a16;
+      font: 16px/1.5 "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", sans-serif;
+    }
+    header, main { width: min(1080px, calc(100% - 32px)); margin: 0 auto; }
+    header { padding: 28px 0 8px; }
+    h1 { margin: 0 0 6px; font-size: 28px; font-weight: 650; }
+    h2 { margin: 0; font-size: 18px; }
+    p { margin: 0; }
+    .muted { color: #5e574e; }
+    .bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 18px 0; }
+    button, input[type="text"] { font: inherit; }
+    button {
+      border: 0;
+      background: #1f6b45;
+      color: white;
+      padding: 10px 14px;
+      cursor: pointer;
+    }
+    button.ghost { background: transparent; color: #1d1a16; border: 1px solid #cfc6b8; }
+    button:disabled { opacity: 0.55; cursor: default; }
+    input[type="file"] { font: inherit; }
+    .status { min-height: 1.5em; }
+    .slots { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0 16px; }
+    .slots button { background: #fffdf8; color: #1d1a16; border: 1px solid #ddd4c6; }
+    .slots button.on { background: #1d1a16; color: white; border-color: #1d1a16; }
+    .layout { display: grid; grid-template-columns: 280px 1fr; gap: 18px; padding-bottom: 40px; }
+    .panel { background: #fffdf8; border: 1px solid #e4dccf; padding: 14px; }
+    .platform, .message { width: 100%; text-align: left; background: transparent; color: inherit; border: 0; border-bottom: 1px solid #eee6da; padding: 10px 0; }
+    .platform b, .message b { display: block; }
+    .platform.on { color: #1f6b45; }
+    .body { white-space: pre-wrap; margin-top: 6px; }
+    .pending { border-left: 3px solid #9d341f; padding-left: 10px; }
+    label { display: flex; gap: 8px; margin-top: 12px; }
+    input[type="text"] { flex: 1; border: 0; border-bottom: 1px solid #1d1a16; background: transparent; padding: 6px 0; }
+    .error { color: #9d341f; }
+    @media (max-width: 800px) { .layout { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>卡槽平台</h1>
+    <p class="muted">导入手机导出的短信包，由本机后端按原来的规则区分平台。你按卡槽去对应平台注销号码，这个页面不替你登录或注销。</p>
+    <div class="bar">
+      <input id="file" type="file" accept=".zip,.txt,application/zip,text/plain" multiple>
+      <button id="import" type="button">导入</button>
+      <button id="classify" class="ghost" type="button">开始区分</button>
+    </div>
+    <p id="status" class="status muted">还没有导入。</p>
+  </header>
+  <main class="layout">
+    <section class="panel">
+      <h2>卡槽</h2>
+      <div id="slots" class="slots"></div>
+      <h2>平台</h2>
+      <div id="platforms"></div>
+    </section>
+    <section class="panel">
+      <h2 id="detail-title">短信</h2>
+      <div id="messages"></div>
+      <form id="label-form" hidden>
+        <label>平台名称 <input id="platform-name" type="text" placeholder="例如微信"></label>
+        <div class="bar"><button type="submit">确认并让本机学习</button></div>
+      </form>
+    </section>
+  </main>
+  <script>
+    const statusEl = document.querySelector("#status");
+    const slotsEl = document.querySelector("#slots");
+    const platformsEl = document.querySelector("#platforms");
+    const messagesEl = document.querySelector("#messages");
+    const detailTitle = document.querySelector("#detail-title");
+    const labelForm = document.querySelector("#label-form");
+    const state = { summary: null, slot: "", platform: "", status: "", selected: new Set() };
+
+    function say(text, isError) {
+      statusEl.textContent = text;
+      statusEl.className = isError ? "status error" : "status muted";
+    }
+
+    async function api(url, options) {
+      const response = await fetch(url, options);
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "请求失败");
+      return payload;
+    }
+
+    async function refresh() {
+      state.summary = await api("/api/summary");
+      const totals = state.summary.totals;
+      if (!state.slot && state.summary.slots.length) state.slot = state.summary.slots[0].slot;
+      renderSlots();
+      renderPlatforms();
+      if (totals.messages) {
+        say(`共 ${totals.messages} 条，已区分 ${totals.labeled}，待确认 ${totals.pending}，不是验证码 ${totals.non_otp}。`);
+      }
+    }
+
+    function renderSlots() {
+      slotsEl.replaceChildren();
+      const pending = document.createElement("button");
+      pending.type = "button";
+      pending.textContent = `待确认 ${state.summary.totals.pending || 0}`;
+      pending.className = state.status === "PENDING_LABEL" ? "on" : "";
+      pending.onclick = () => openList("", "", "PENDING_LABEL", "待确认");
+      slotsEl.append(pending);
+      for (const slot of state.summary.slots) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.textContent = `${slot.slot} · ${slot.labeled || 0}`;
+        button.className = state.slot === slot.slot && !state.status ? "on" : "";
+        button.onclick = () => { state.slot = slot.slot; state.platform = ""; state.status = ""; renderSlots(); renderPlatforms(); openList(slot.slot, "", "", slot.slot); };
+        slotsEl.append(button);
+      }
+    }
+
+    function renderPlatforms() {
+      platformsEl.replaceChildren();
+      const rows = state.summary.platforms.filter((item) => !state.slot || item.slot === state.slot);
+      if (!rows.length) {
+        platformsEl.textContent = "这个卡槽还没有区分出平台。";
+        return;
+      }
+      for (const item of rows) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "platform" + (state.platform === item.platform_key ? " on" : "");
+        button.innerHTML = `<b></b><span class="muted"></span>`;
+        button.querySelector("b").textContent = item.platform_name;
+        button.querySelector("span").textContent = `${item.count} 条 · 最近 ${item.latest || "时间不明"}`;
+        button.onclick = () => openList(item.slot, item.platform_key, "LABELED", item.platform_name);
+        platformsEl.append(button);
+      }
+    }
+
+    async function openList(slot, platform, status, title) {
+      state.slot = slot || state.slot;
+      state.platform = platform;
+      state.status = status;
+      state.selected.clear();
+      detailTitle.textContent = title;
+      labelForm.hidden = status !== "PENDING_LABEL";
+      renderSlots();
+      const query = new URLSearchParams();
+      if (slot) query.set("slot", slot);
+      if (platform) query.set("platform", platform);
+      if (status) query.set("status", status);
+      const payload = await api("/api/messages?" + query.toString());
+      messagesEl.replaceChildren();
+      if (!payload.messages.length) {
+        messagesEl.textContent = "没有短信。";
+        return;
+      }
+      for (const message of payload.messages) {
+        const block = document.createElement("article");
+        block.className = "message" + (message.status === "PENDING_LABEL" ? " pending" : "");
+        const titleLine = document.createElement("b");
+        titleLine.textContent = `${message.platform_name || "未区分"} · ${message.received_at || "时间不明"} · ${message.sender}`;
+        const body = document.createElement("div");
+        body.className = "body";
+        body.textContent = message.body;
+        block.append(titleLine, body);
+        if (message.status === "PENDING_LABEL") {
+          const pick = document.createElement("input");
+          pick.type = "checkbox";
+          pick.onchange = () => {
+            if (pick.checked) state.selected.add(message.id);
+            else state.selected.delete(message.id);
+          };
+          block.prepend(pick);
+        }
+        messagesEl.append(block);
+      }
+    }
+
+    document.querySelector("#import").onclick = async () => {
+      const files = document.querySelector("#file").files;
+      if (!files.length) { say("先选择手机导出的 zip 或 txt。", true); return; }
+      const form = new FormData();
+      for (const file of files) form.append("file", file, file.name);
+      say("正在导入…");
+      try {
+        const result = await api("/api/import", { method: "POST", body: form });
+        say(`导入 ${result.inserted} 条，跳过重复 ${result.skipped} 条。接着点「开始区分」。`);
+        await refresh();
+      } catch (error) { say(error.message, true); }
+    };
+
+    document.querySelector("#classify").onclick = async () => {
+      say("正在区分…");
+      try {
+        const result = await api("/api/classify", { method: "POST" });
+        say(`区分完成。平台 ${result.LABELED || 0}，待确认 ${result.PENDING_LABEL || 0}，不是验证码 ${result.NON_OTP || 0}。`);
+        await refresh();
+      } catch (error) { say(error.message, true); }
+    };
+
+    labelForm.onsubmit = async (event) => {
+      event.preventDefault();
+      const name = document.querySelector("#platform-name").value.trim();
+      if (!state.selected.size || !name) { say("勾选短信并填写平台名称。", true); return; }
+      try {
+        await api("/api/label", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ids: [...state.selected], platformName: name }),
+        });
+        document.querySelector("#platform-name").value = "";
+        say(`已把 ${state.selected.size} 条标为「${name}」，并重新区分其余待确认短信。`);
+        await refresh();
+        await openList("", "", "PENDING_LABEL", "待确认");
+      } catch (error) { say(error.message, true); }
+    };
+
+    refresh().catch((error) => say(error.message, true));
+  </script>
+</body>
+</html>

@@ -1,0 +1,18 @@
+# 本机 Web。使用已经存在的 python:3.10-alpine，不构建新镜像。
+# 源码目录挂载到容器 /app，改文件后重启容器即可。
+name: sms-platform-web
+
+services:
+  web:
+    image: python:3.10-alpine
+    pull_policy: never
+    working_dir: /app
+    command: ["python", "-u", "server.py"]
+    environment:
+      SMS_PLATFORM_HOST: 0.0.0.0
+      SMS_PLATFORM_PORT: "8790"
+      SMS_PLATFORM_DATA: /app/data
+    ports:
+      - "127.0.0.1:8790:8790"
+    volumes:
+      - ./:/app
