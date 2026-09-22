@@ -11,3 +11,4 @@ captures/
 /.gradle-codex
 /.android-codex
 HANDOFF.md
+device-export/
